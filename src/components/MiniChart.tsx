@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
+import Svg, { Polyline } from 'react-native-svg';
 import { Colors } from '../theme';
 
 interface Props {
@@ -11,37 +12,30 @@ interface Props {
 export function MiniChart({ data, color = Colors.teal, height = 40 }: Props) {
   if (data.length < 2) return <View style={[styles.container, { height }]} />;
 
-  const max = Math.max(...data);
-  const min = Math.min(...data);
+  const max = data.reduce((a, b) => (b > a ? b : a), data[0]);
+  const min = data.reduce((a, b) => (b < a ? b : a), data[0]);
   const range = max - min || 1;
-  const normalized = data.map((v) => (v - min) / range);
+
+  const points = data
+    .map((v, i) => {
+      const x = (i / (data.length - 1)) * 100;
+      const y = (1 - (v - min) / range) * 100;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(' ');
 
   return (
     <View style={[styles.container, { height }]}>
-      {normalized.slice(0, -1).map((v, i) => {
-        const nextV = normalized[i + 1];
-        const x1    = (i / (normalized.length - 1)) * 100;
-        const x2    = ((i + 1) / (normalized.length - 1)) * 100;
-        const y1    = (1 - v) * height;
-        const y2    = (1 - nextV) * height;
-        const top   = Math.min(y1, y2);
-        const segH  = Math.max(Math.abs(y2 - y1), 1);
-
-        return (
-          <View
-            key={i}
-            style={{
-              position:        'absolute',
-              left:            `${x1}%` as any,
-              top,
-              width:           `${x2 - x1}%` as any,
-              height:          segH,
-              backgroundColor: color,
-              opacity:         0.5 + (i / normalized.length) * 0.5,
-            }}
-          />
-        );
-      })}
+      <Svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <Polyline
+          points={points}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      </Svg>
     </View>
   );
 }

@@ -233,7 +233,8 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   setCalib: (c) => {
     const next = { ...get().calib, ...c };
     set({ calib: next });
-    AsyncStorage.setItem('aerodrag:calib', JSON.stringify(next));
+    AsyncStorage.setItem('aerodrag:calib', JSON.stringify(next))
+      .catch((e) => console.warn('[store] persistenza calib fallita:', e));
   },
 
   loadCalib: async () => {

@@ -22,6 +22,16 @@ function avg(arr: number[]): number {
   return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
+function minOf(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  return arr.reduce((a, b) => (b < a ? b : a), arr[0]);
+}
+
+function maxOf(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  return arr.reduce((a, b) => (b > a ? b : a), arr[0]);
+}
+
 function LapRow({ lap }: { lap: LapStats }) {
   return (
     <View style={styles.lapRow}>
@@ -79,9 +89,9 @@ export function SessionScreen() {
         <>
           {/* Statistiche globali */}
           <View style={styles.statsGrid}>
-            <StatBox label="CdA medio"    value={fmt(avg(cdaValues), 3)}          color={Colors.teal}  />
-            <StatBox label="CdA min"      value={fmt(Math.min(...cdaValues), 3)}  color={Colors.teal}  />
-            <StatBox label="CdA max"      value={fmt(Math.max(...cdaValues), 3)}  color={Colors.amber} />
+            <StatBox label="CdA medio"    value={fmt(avg(cdaValues), 3)}    color={Colors.teal}  />
+            <StatBox label="CdA min"      value={fmt(minOf(cdaValues), 3)}  color={Colors.teal}  />
+            <StatBox label="CdA max"      value={fmt(maxOf(cdaValues), 3)}  color={Colors.amber} />
             <StatBox label="Potenza avg"  value={`${fmt(avg(powerValues), 0)} W`} color={Colors.amber} />
             <StatBox label="Velocità avg" value={`${fmt(avg(speedValues) * 3.6, 1)} km/h`} color={Colors.blue} />
             <StatBox label="HR medio"     value={`${fmt(avg(hrValues), 0)} bpm`}  color={Colors.red}   />
