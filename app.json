@@ -1,25 +1,63 @@
 {
   "expo": {
-    "name": "aerodrag-new",
-    "slug": "aerodrag-new",
+    "name": "AeroDrag",
+    "slug": "aerodrag",
     "version": "1.0.0",
+    "scheme": "aerodrag",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "ios": {
-      "supportsTablet": true
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#090d14"
     },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": ["peripheral", "central"],
+          "bluetoothAlwaysPermission": "Consenti ad AeroDrag di connettersi al sensore"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "AeroDrag richiede la localizzazione per il BLE scan."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "AeroDrag usa la fotocamera per rilevare i marker di postura."
+        }
+      ]
+    ],
     "android": {
+      "package": "com.aerodrag.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#090d14"
       },
-      "predictiveBackGestureEnabled": false
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA"
+      ]
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
+    "ios": {
+      "bundleIdentifier": "com.aerodrag.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "UIBackgroundModes": ["bluetooth-central"]
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "dc2790fe-8922-42b4-bc1b-45f8f4a5b703"
+      }
     }
   }
 }

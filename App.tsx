@@ -1,20 +1,133 @@
+import React, { useState, useEffect } from 'react';
+import { SafeAreaView, StyleSheet, View, Text } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-export default function App() {
+import { useBLE } from './src/hooks/useBLE';
+import { useStore } from './src/store';
+import { NavBar, Screen } from './src/components';
+
+import { LiveScreen }     from './src/screens/LiveScreen';
+import { SessionScreen }  from './src/screens/SessionScreen';
+import { CoachScreen }    from './src/screens/CoachScreen';
+import { AthletesScreen } from './src/screens/AthletesScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
+
+import { Colors, Sp } from './src/theme';
+
+function TopBar() {
+  const { bleStatus, batteryPct, isRecording, elapsed, activeAthleteId, athleteProfiles } = useStore();
+
+  const bleColor =
+    bleStatus === 'connected'                                    ? Colors.teal  :
+    bleStatus === 'error'                                        ? Colors.red   :
+    bleStatus === 'scanning' || bleStatus === 'connecting'       ? Colors.amber :
+    Colors.muted;
+
+  const fmtTime = (s: number) =>
+    `${String(Math.floor(s / 3600)).padStart(2, '0')}:` +
+    `${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:` +
+    `${String(s % 60).padStart(2, '0')}`;
+
+  const activeProfile = athleteProfiles.find((p) => p.id === activeAthleteId);
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
+    <View style={topStyles.bar}>
+      <View style={topStyles.left}>
+        <View style={[topStyles.dot, { backgroundColor: bleColor }]} />
+        <Text style={topStyles.appName}>AeroDrag</Text>
+        {activeProfile && (
+          <View style={topStyles.pill}>
+            <Text style={topStyles.pillText}>{activeProfile.name}</Text>
+          </View>
+        )}
+      </View>
+      <View style={topStyles.right}>
+        {isRecording && (
+          <View style={topStyles.recPill}>
+            <View style={topStyles.recDot} />
+            <Text style={topStyles.recTime}>{fmtTime(elapsed)}</Text>
+          </View>
+        )}
+        {batteryPct > 0 && (
+          <Text style={topStyles.battery}>{batteryPct}%</Text>
+        )}
+      </View>
     </View>
   );
 }
 
+export default function App() {
+  const [screen, setScreen] = useState<Screen>('live');
+  const { loadCalib, loadAthleteProfiles, loadPreviousSessions } = useStore();
+
+  useBLE();
+
+  useEffect(() => {
+    loadCalib();
+    loadAthleteProfiles();
+    loadPreviousSessions();
+  }, []);
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.root}>
+        <StatusBar style="light" />
+        <TopBar />
+        <View style={styles.body}>
+          {screen === 'live'     && <LiveScreen />}
+          {screen === 'session'  && <SessionScreen />}
+          {screen === 'coach'    && <CoachScreen />}
+          {screen === 'athletes' && <AthletesScreen />}
+          {screen === 'settings' && <SettingsScreen />}
+        </View>
+        <NavBar current={screen} onNavigate={setScreen} />
+      </SafeAreaView>
+    </GestureHandlerRootView>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
+  root: { flex: 1, backgroundColor: Colors.bg },
+  body: { flex: 1 },
+});
+
+const topStyles = StyleSheet.create({
+  bar: {
+    flexDirection:    'row',
+    justifyContent:   'space-between',
+    alignItems:       'center',
+    paddingHorizontal: Sp.md,
+    paddingVertical:   Sp.sm,
+    backgroundColor:  Colors.s1,
+    borderBottomWidth: 0.5,
+    borderBottomColor: Colors.border,
   },
+  left:    { flexDirection: 'row', alignItems: 'center', gap: Sp.sm },
+  right:   { flexDirection: 'row', alignItems: 'center', gap: Sp.sm },
+  dot:     { width: 7, height: 7, borderRadius: 4 },
+  appName: { fontSize: 14, fontWeight: '700', color: Colors.textBright },
+  pill: {
+    backgroundColor: Colors.tealBg,
+    borderRadius:    10,
+    borderWidth:     0.5,
+    borderColor:     Colors.teal + '55',
+    paddingHorizontal: 8,
+    paddingVertical:   2,
+  },
+  pillText: { fontSize: 11, color: Colors.teal, fontWeight: '600' },
+  recPill: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             5,
+    backgroundColor: Colors.redBg,
+    borderRadius:    12,
+    borderWidth:     0.5,
+    borderColor:     Colors.red,
+    paddingHorizontal: 8,
+    paddingVertical:   3,
+  },
+  recDot:  { width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.red },
+  recTime: { fontSize: 11, color: Colors.red, fontVariant: ['tabular-nums'] },
+  battery: { fontSize: 11, color: Colors.muted },
 });
