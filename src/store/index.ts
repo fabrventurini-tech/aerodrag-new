@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SensorInput, PhysicsOutput, computePhysics } from '../physics/engine';
+import { loadPairedDevice } from '../security/pairing';
 
 // ── Tipi ──────────────────────────────────────────────────────────────────────
 
@@ -110,6 +111,9 @@ interface AeroDragStore {
 
   // Sessioni precedenti
   loadPreviousSessions: () => Promise<void>;
+
+  // Caricamento device accoppiato
+  loadPairedDeviceId: () => Promise<void>;
 }
 
 export const useStore = create<AeroDragStore>((set, get) => ({
@@ -185,13 +189,18 @@ export const useStore = create<AeroDragStore>((set, get) => ({
 
   stopSession: () => {
     const { history, previousSessions } = get();
+    const nextSessions = history.length > 0
+      ? [history, ...previousSessions].slice(0, 10)
+      : previousSessions;
     set({
       isRecording:  false,
       sessionStart: null,
-      previousSessions: history.length > 0
-        ? [history, ...previousSessions].slice(0, 10)
-        : previousSessions,
+      previousSessions: nextSessions,
     });
+    if (history.length > 0) {
+      AsyncStorage.setItem('aerodrag:sessions', JSON.stringify(nextSessions))
+        .catch(() => {});
+    }
   },
 
   addLap: () => {
@@ -224,7 +233,8 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   setCalib: (c) => {
     const next = { ...get().calib, ...c };
     set({ calib: next });
-    AsyncStorage.setItem('aerodrag:calib', JSON.stringify(next));
+    AsyncStorage.setItem('aerodrag:calib', JSON.stringify(next))
+      .catch((e) => console.warn('[store] persistenza calib fallita:', e));
   },
 
   loadCalib: async () => {
@@ -266,5 +276,10 @@ export const useStore = create<AeroDragStore>((set, get) => ({
       const raw = await AsyncStorage.getItem('aerodrag:sessions');
       if (raw) set({ previousSessions: JSON.parse(raw) });
     } catch {}
+  },
+
+  loadPairedDeviceId: async () => {
+    const d = await loadPairedDevice();
+    if (d) set({ pairedDeviceId: d.id });
   },
 }));

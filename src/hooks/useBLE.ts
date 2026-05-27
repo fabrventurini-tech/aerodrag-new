@@ -65,15 +65,20 @@ function parseSensors(b64: string) {
 // ── Hook principale ───────────────────────────────────────────────────────────
 
 export function useBLE() {
-  const manager     = useRef<BleManager | null>(null);
-  const deviceRef   = useRef<Device | null>(null);
-  const tickRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const subs        = useRef<Subscription[]>([]);
+  const manager        = useRef<BleManager | null>(null);
+  const deviceRef      = useRef<Device | null>(null);
+  const tickRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const subs           = useRef<Subscription[]>([]);
+  const disconnectSub  = useRef<Subscription | null>(null);
+  const pairedIdRef    = useRef<string | null>(null);
 
   const {
     setBleStatus, setBattery, updateSensors,
     tick, isSimMode, pairedDeviceId,
   } = useStore();
+
+  // Sync ref → leggi sempre il valore corrente nello scan callback
+  useEffect(() => { pairedIdRef.current = pairedDeviceId; }, [pairedDeviceId]);
 
   // ── Permessi Android ───────────────────────────────────────────────────────
   async function requestPermissions(): Promise<boolean> {
@@ -125,7 +130,8 @@ export function useBLE() {
       subscribeAll(connected);
 
       // Rilevamento disconnessione
-      connected.onDisconnected(() => {
+      disconnectSub.current?.remove();
+      disconnectSub.current = connected.onDisconnected(() => {
         cleanupSubs();
         deviceRef.current = null;
         setBleStatus('scanning');
@@ -148,8 +154,9 @@ export function useBLE() {
         if (err) { setBleStatus('error'); return; }
         if (!device) return;
 
-        // Se c'è un device accoppiato, connetti solo quello
-        if (pairedDeviceId && device.id !== pairedDeviceId) return;
+        // Se c'è un device accoppiato, connetti solo quello (via ref per leggere il valore aggiornato)
+        const pid = pairedIdRef.current;
+        if (pid && device.id !== pid) return;
 
         manager.current?.stopDeviceScan();
         connect(device);
@@ -214,8 +221,11 @@ export function useBLE() {
 
     return () => {
       cleanupSubs();
+      disconnectSub.current?.remove();
+      disconnectSub.current = null;
       if (tickRef.current) clearInterval(tickRef.current);
       manager.current?.destroy();
+      manager.current = null;
     };
   }, [isSimMode]);
 }

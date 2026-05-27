@@ -14,17 +14,12 @@ export function AthletesScreen() {
   const {
     athleteProfiles, activeAthleteId,
     saveAthleteProfile, deleteAthleteProfile, setActiveAthlete,
-    loadAthleteProfiles,
   } = useStore();
 
   const [editing, setEditing]   = useState<AthleteProfile | null>(null);
   const [name, setName]         = useState('');
   const [mass, setMass]         = useState('75');
   const [crr, setCrr]           = useState('0.004');
-
-  React.useEffect(() => {
-    loadAthleteProfiles();
-  }, []);
 
   function openNew() {
     setEditing({ id: generateId(), name: '', massKg: 75, crr: 0.004 });

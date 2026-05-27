@@ -59,7 +59,7 @@ function TopBar() {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('live');
-  const { loadCalib, loadAthleteProfiles, loadPreviousSessions } = useStore();
+  const { loadCalib, loadAthleteProfiles, loadPreviousSessions, loadPairedDeviceId } = useStore();
 
   useBLE();
 
@@ -67,6 +67,7 @@ export default function App() {
     loadCalib();
     loadAthleteProfiles();
     loadPreviousSessions();
+    loadPairedDeviceId();
   }, []);
 
   return (

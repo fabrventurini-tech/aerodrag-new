@@ -9,13 +9,15 @@ import {
   removeSensorFromWhitelist, clearSensorWhitelist,
   PairedDevice, SensorEntry,
 } from '../security/pairing';
+import { QRPairScreen } from './QRPairScreen';
 import { Colors, Sp, Radius } from '../theme';
 
 export function SettingsScreen() {
-  const { calib, setCalib, isSimMode, setSimMode } = useStore();
+  const { calib, setCalib, isSimMode, setSimMode, setPairedDevice: setStorePairedDevice } = useStore();
 
   const [pairedDevice, setPairedDevice]     = useState<PairedDevice | null>(null);
   const [sensorList, setSensorList]         = useState<SensorEntry[]>([]);
+  const [showScanner, setShowScanner]       = useState(false);
 
   useEffect(() => {
     loadPairedDevice().then(setPairedDevice);
@@ -34,6 +36,7 @@ export function SettingsScreen() {
           onPress: async () => {
             await unpairDevice();
             setPairedDevice(null);
+            setStorePairedDevice(null);
           },
         },
       ]
@@ -81,7 +84,21 @@ export function SettingsScreen() {
             </Text>
           </>
         )}
+        <TouchableOpacity
+          style={[styles.btnPair, pairedDevice ? styles.btnPairSecondary : null]}
+          onPress={() => setShowScanner(true)}
+        >
+          <Text style={[styles.btnPairText, pairedDevice ? { color: Colors.muted } : null]}>
+            {pairedDevice ? 'Riaccoppia un altro device' : 'Scansiona QR'}
+          </Text>
+        </TouchableOpacity>
       </View>
+
+      <QRPairScreen
+        visible={showScanner}
+        onClose={() => setShowScanner(false)}
+        onPaired={(device) => setPairedDevice(device)}
+      />
 
       {/* ── Sensori BLE accoppiati ── */}
       <Text style={styles.sectionTitle}>Sensori BLE accoppiati</Text>
@@ -238,6 +255,21 @@ const styles = StyleSheet.create({
     marginTop:       Sp.xs,
   },
   dangerText: { color: Colors.red, fontWeight: '600', fontSize: 13 },
+
+  btnPair: {
+    backgroundColor: Colors.tealBg,
+    borderRadius:    Radius.sm,
+    borderWidth:     0.5,
+    borderColor:     Colors.teal,
+    padding:         Sp.sm,
+    alignItems:      'center',
+    marginTop:       Sp.xs,
+  },
+  btnPairSecondary: {
+    backgroundColor: Colors.s2,
+    borderColor:     Colors.border,
+  },
+  btnPairText: { color: Colors.teal, fontWeight: '600', fontSize: 13 },
 
   sensorRow: {
     flexDirection:  'row',
