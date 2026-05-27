@@ -1,25 +1,104 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
   TextInput, TouchableOpacity,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useStore } from '../store';
 import { Colors, Sp, Radius } from '../theme';
+
+const KEY_COACH_URL = 'aerodrag:coach_url';
 
 export function CoachScreen() {
   const [url, setUrl]       = useState('');
   const [saved, setSaved]   = useState('');
-  const [status, setStatus] = useState<'idle' | 'connected' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const { history, physics, sensor } = useStore();
+  const wsRef         = useRef<WebSocket | null>(null);
+  const reconnectRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendRef       = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  function handleSave() {
-    if (!url.trim()) return;
-    setSaved(url.trim());
+  const { physics, sensor, history, isRecording, activeAthleteId } = useStore();
+
+  // Ricarica URL salvato
+  useEffect(() => {
+    AsyncStorage.getItem(KEY_COACH_URL).then((u) => {
+      if (u) { setUrl(u); setSaved(u); connect(u); }
+    });
+    return () => disconnect();
+  }, []);
+
+  function disconnect() {
+    if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null; }
+    if (sendRef.current)      { clearInterval(sendRef.current);    sendRef.current = null; }
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+  }
+
+  function connect(targetUrl: string) {
+    disconnect();
+    if (!targetUrl.startsWith('ws://') && !targetUrl.startsWith('wss://')) {
+      setStatus('error');
+      setErrorMsg('URL deve iniziare con ws:// o wss://');
+      return;
+    }
+    setStatus('connecting');
+    setErrorMsg('');
+    try {
+      const ws = new WebSocket(targetUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setStatus('connected');
+        // Invia snapshot a 2 Hz
+        sendRef.current = setInterval(() => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          const { physics: p, sensor: s, isRecording: rec, activeAthleteId: aid } = useStore.getState();
+          ws.send(JSON.stringify({
+            t: Date.now(),
+            athleteId: aid,
+            recording: rec,
+            physics: p,
+            sensor: s,
+          }));
+        }, 500);
+      };
+
+      ws.onerror = () => {
+        setStatus('error');
+        setErrorMsg('Errore di connessione');
+      };
+
+      ws.onclose = () => {
+        if (sendRef.current) { clearInterval(sendRef.current); sendRef.current = null; }
+        setStatus('error');
+        // Riconnessione automatica dopo 5s
+        reconnectRef.current = setTimeout(() => connect(targetUrl), 5000);
+      };
+    } catch (e: any) {
+      setStatus('error');
+      setErrorMsg(String(e?.message ?? e));
+    }
+  }
+
+  async function handleSave() {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    setSaved(trimmed);
+    await AsyncStorage.setItem(KEY_COACH_URL, trimmed);
+    connect(trimmed);
+  }
+
+  function handleDisconnect() {
+    disconnect();
     setStatus('idle');
   }
 
-  const lastCda   = history.length > 0
+  const lastCda = history.length > 0
     ? history.slice(-10).map((p) => p.physics.cda).filter((v) => v > 0)
     : [];
   const avgCda = lastCda.length > 0
@@ -44,11 +123,22 @@ export function CoachScreen() {
           placeholder="ws://192.168.1.x:3000"
           placeholderTextColor={Colors.muted}
           autoCapitalize="none"
+          autoCorrect={false}
           keyboardType="url"
         />
-        <TouchableOpacity style={styles.btn} onPress={handleSave}>
-          <Text style={styles.btnText}>Salva e connetti</Text>
-        </TouchableOpacity>
+        <View style={styles.btnRow}>
+          <TouchableOpacity style={styles.btn} onPress={handleSave}>
+            <Text style={styles.btnText}>Salva e connetti</Text>
+          </TouchableOpacity>
+          {status !== 'idle' && (
+            <TouchableOpacity
+              style={[styles.btn, { backgroundColor: Colors.redBg, borderColor: Colors.red }]}
+              onPress={handleDisconnect}
+            >
+              <Text style={[styles.btnText, { color: Colors.red }]}>Disconnetti</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         {saved !== '' && (
           <Text style={styles.savedUrl}>{saved}</Text>
         )}
@@ -60,12 +150,15 @@ export function CoachScreen() {
         <View style={styles.statusRow}>
           <View style={[styles.dot, {
             backgroundColor:
-              status === 'connected' ? Colors.teal :
-              status === 'error'     ? Colors.red  : Colors.muted,
+              status === 'connected'  ? Colors.teal  :
+              status === 'connecting' ? Colors.amber :
+              status === 'error'      ? Colors.red   : Colors.muted,
           }]} />
           <Text style={styles.statusText}>
-            {status === 'connected' ? 'Connesso' :
-             status === 'error'     ? 'Errore connessione' : 'Non connesso'}
+            {status === 'connected'  ? 'Connesso' :
+             status === 'connecting' ? 'Connessione in corso…' :
+             status === 'error'      ? `Errore${errorMsg ? ' — ' + errorMsg : ''}` :
+             'Non connesso'}
           </Text>
         </View>
       </View>
@@ -82,7 +175,8 @@ export function CoachScreen() {
       </View>
 
       <Text style={styles.note}>
-        Il coach dashboard riceve i dati in tempo reale via WebSocket dal Raspberry Pi collegato all'ESP32.
+        Il coach dashboard riceve i dati a 2 Hz via WebSocket.
+        {isRecording && '  •  Sessione in registrazione'}
       </Text>
     </ScrollView>
   );
@@ -127,7 +221,9 @@ const styles = StyleSheet.create({
     fontSize:        14,
     padding:         Sp.sm,
   },
+  btnRow: { flexDirection: 'row', gap: Sp.sm },
   btn: {
+    flex:            1,
     backgroundColor: Colors.tealBg,
     borderRadius:    Radius.sm,
     borderWidth:     0.5,
@@ -140,7 +236,7 @@ const styles = StyleSheet.create({
 
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: Sp.sm },
   dot:       { width: 8, height: 8, borderRadius: 4 },
-  statusText:{ fontSize: 14, color: Colors.text },
+  statusText:{ fontSize: 14, color: Colors.text, flex: 1 },
 
   dataGrid: {
     flexDirection: 'row',
