@@ -6,9 +6,6 @@
     "scheme": "aerodrag",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "backgroundColor": "#090d14"
-    },
     "plugins": [
       [
         "react-native-ble-plx",
