@@ -39,11 +39,6 @@
     "production": {
       "android": {
         "track": "internal"
-      },
-      "ios": {
-        "appleId": "fabr.venturini@gmail.com",
-        "ascAppId": "",
-        "appleTeamId": ""
       }
     }
   }
