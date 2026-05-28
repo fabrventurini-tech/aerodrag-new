@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { SafeAreaView, StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, View, Text } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { useBLE } from './src/hooks/useBLE';
 import { useStore } from './src/store';
@@ -72,18 +73,20 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaView style={styles.root}>
-        <StatusBar style="light" />
-        <TopBar />
-        <View style={styles.body}>
-          {screen === 'live'     && <LiveScreen />}
-          {screen === 'session'  && <SessionScreen />}
-          {screen === 'coach'    && <CoachScreen />}
-          {screen === 'athletes' && <AthletesScreen />}
-          {screen === 'settings' && <SettingsScreen />}
-        </View>
-        <NavBar current={screen} onNavigate={setScreen} />
-      </SafeAreaView>
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+          <StatusBar style="light" />
+          <TopBar />
+          <View style={styles.body}>
+            {screen === 'live'     && <LiveScreen />}
+            {screen === 'session'  && <SessionScreen />}
+            {screen === 'coach'    && <CoachScreen />}
+            {screen === 'athletes' && <AthletesScreen />}
+            {screen === 'settings' && <SettingsScreen />}
+          </View>
+          <NavBar current={screen} onNavigate={setScreen} />
+        </SafeAreaView>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
