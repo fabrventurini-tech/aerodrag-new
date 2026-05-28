@@ -6,7 +6,6 @@
     "scheme": "aerodrag",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
     "splash": {
       "backgroundColor": "#090d14"
     },
