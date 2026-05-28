@@ -110,7 +110,7 @@ const styles = StyleSheet.create({
   },
   text:    { fontSize: 14, color: Colors.text, textAlign: 'center' },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems:     'center',
     justifyContent: 'center',
     gap:            Sp.lg,
