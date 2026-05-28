@@ -16,32 +16,38 @@ export function AthletesScreen() {
     saveAthleteProfile, deleteAthleteProfile, setActiveAthlete,
   } = useStore();
 
-  const [editing, setEditing]   = useState<AthleteProfile | null>(null);
-  const [name, setName]         = useState('');
-  const [mass, setMass]         = useState('75');
-  const [crr, setCrr]           = useState('0.004');
+  const [editing, setEditing]       = useState<AthleteProfile | null>(null);
+  const [name, setName]             = useState('');
+  const [massRider, setMassRider]   = useState('70');
+  const [massBike, setMassBike]     = useState('8');
+  const [crr, setCrr]               = useState('0.004');
 
   function openNew() {
-    setEditing({ id: generateId(), name: '', massKg: 75, crr: 0.004 });
+    setEditing({ id: generateId(), name: '', massRiderKg: 70, massBikeKg: 8, crr: 0.004 });
     setName('');
-    setMass('75');
+    setMassRider('70');
+    setMassBike('8');
     setCrr('0.004');
   }
 
   function openEdit(p: AthleteProfile) {
     setEditing(p);
     setName(p.name);
-    setMass(String(p.massKg));
+    setMassRider(String(p.massRiderKg));
+    setMassBike(String(p.massBikeKg));
     setCrr(String(p.crr));
   }
 
   async function handleSave() {
     if (!editing || !name.trim()) return;
+    const riderKg = parseFloat(massRider) || 70;
+    const bikeKg  = parseFloat(massBike)  || 8;
     const profile: AthleteProfile = {
-      id:     editing.id,
-      name:   name.trim(),
-      massKg: parseFloat(mass) || 75,
-      crr:    parseFloat(crr)  || 0.004,
+      id:          editing.id,
+      name:        name.trim(),
+      massRiderKg: riderKg,
+      massBikeKg:  bikeKg,
+      crr:         parseFloat(crr) || 0.004,
     };
     await saveAthleteProfile(profile);
     setEditing(null);
@@ -98,7 +104,7 @@ export function AthletesScreen() {
               )}
             </View>
             <Text style={styles.profileDetail}>
-              {p.massKg} kg  •  CRR {p.crr}
+              Ciclista {p.massRiderKg} kg  •  Bici {p.massBikeKg} kg  •  Totale {p.massRiderKg + p.massBikeKg} kg  •  CRR {p.crr}
             </Text>
             <View style={styles.profileActions}>
               <TouchableOpacity
@@ -142,11 +148,20 @@ export function AthletesScreen() {
             placeholderTextColor={Colors.muted}
           />
 
-          <Text style={styles.fieldLabel}>Massa totale (atleta + bici) [kg]</Text>
+          <Text style={styles.fieldLabel}>Massa ciclista [kg]</Text>
           <TextInput
             style={styles.input}
-            value={mass}
-            onChangeText={setMass}
+            value={massRider}
+            onChangeText={setMassRider}
+            keyboardType="decimal-pad"
+            placeholderTextColor={Colors.muted}
+          />
+
+          <Text style={styles.fieldLabel}>Massa bici [kg]</Text>
+          <TextInput
+            style={styles.input}
+            value={massBike}
+            onChangeText={setMassBike}
             keyboardType="decimal-pad"
             placeholderTextColor={Colors.muted}
           />

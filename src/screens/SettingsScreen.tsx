@@ -132,12 +132,20 @@ export function SettingsScreen() {
       <Text style={styles.sectionTitle}>Calibrazione</Text>
       <View style={styles.card}>
         <CalibRow
-          label="Massa totale (kg)"
-          value={calib.massKg}
+          label="Massa ciclista (kg)"
+          value={calib.massRiderKg}
           step={0.5}
-          min={40}
-          max={150}
-          onChange={(v) => setCalib({ massKg: v })}
+          min={30}
+          max={130}
+          onChange={(v) => setCalib({ massRiderKg: v })}
+        />
+        <CalibRow
+          label="Massa bici (kg)"
+          value={calib.massBikeKg}
+          step={0.5}
+          min={3}
+          max={30}
+          onChange={(v) => setCalib({ massBikeKg: v })}
         />
         <CalibRow
           label="CRR"

@@ -23,22 +23,25 @@ export interface LapStats {
 }
 
 export interface AthleteProfile {
-  id:     string;
-  name:   string;
-  massKg: number;
-  crr:    number;
+  id:          string;
+  name:        string;
+  massRiderKg: number;
+  massBikeKg:  number;
+  crr:         number;
 }
 
 export interface CalibrationParams {
-  massKg: number;
-  crr:    number;
+  massRiderKg: number;
+  massBikeKg:  number;
+  crr:         number;
   pitotOffset: number;
 }
 
 // ── Stato default ─────────────────────────────────────────────────────────────
 
 const DEFAULT_CALIB: CalibrationParams = {
-  massKg:      75,
+  massRiderKg: 70,
+  massBikeKg:  8,
   crr:         0.004,
   pitotOffset: 0,
 };
@@ -154,8 +157,9 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     const activeProfile = get().athleteProfiles.find(
       (p) => p.id === get().activeAthleteId
     );
-    const mass = activeProfile?.massKg ?? calib.massKg;
-    const crr  = activeProfile?.crr    ?? calib.crr;
+    const mass = (activeProfile?.massRiderKg ?? calib.massRiderKg)
+               + (activeProfile?.massBikeKg  ?? calib.massBikeKg);
+    const crr  = activeProfile?.crr ?? calib.crr;
     const physics = computePhysics(next, mass, crr);
 
     set({ sensor: next, physics });
@@ -240,7 +244,16 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   loadCalib: async () => {
     try {
       const raw = await AsyncStorage.getItem('aerodrag:calib');
-      if (raw) set({ calib: { ...DEFAULT_CALIB, ...JSON.parse(raw) } });
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // Migrazione da massKg unico a massRiderKg + massBikeKg
+        if (parsed.massKg !== undefined && parsed.massRiderKg === undefined) {
+          parsed.massRiderKg = Math.max(parsed.massKg - 8, 40);
+          parsed.massBikeKg  = 8;
+          delete parsed.massKg;
+        }
+        set({ calib: { ...DEFAULT_CALIB, ...parsed } });
+      }
     } catch {}
   },
 
@@ -248,7 +261,16 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   loadAthleteProfiles: async () => {
     try {
       const raw = await AsyncStorage.getItem('aerodrag:athletes');
-      if (raw) set({ athleteProfiles: JSON.parse(raw) });
+      if (raw) {
+        const profiles = (JSON.parse(raw) as any[]).map((p) => {
+          // Migrazione da massKg unico a massRiderKg + massBikeKg
+          if (p.massKg !== undefined && p.massRiderKg === undefined) {
+            return { ...p, massRiderKg: Math.max(p.massKg - 8, 40), massBikeKg: 8 };
+          }
+          return p;
+        });
+        set({ athleteProfiles: profiles });
+      }
     } catch {}
   },
 
