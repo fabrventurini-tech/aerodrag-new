@@ -19,7 +19,12 @@ export function CoachScreen() {
   const reconnectRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sendRef       = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const { physics, sensor, history, isRecording, activeAthleteId } = useStore();
+  const {
+    physics, sensor, history, isRecording,
+    activeAthleteId, athleteProfiles,
+    pairedDeviceId, batteryPct, currentLap,
+    startSession, stopSession, addLap,
+  } = useStore();
 
   // Ricarica URL salvato
   useEffect(() => {
@@ -54,18 +59,60 @@ export function CoachScreen() {
 
       ws.onopen = () => {
         setStatus('connected');
-        // Invia snapshot a 2 Hz
+
+        // Fix: invia hello con MAC BLE e nome atleta per identificazione sul Pi
+        const state = useStore.getState();
+        const activeProfile = state.athleteProfiles.find(
+          (p) => p.id === state.activeAthleteId
+        );
+        ws.send(JSON.stringify({
+          type:    'hello',
+          device:  state.pairedDeviceId ?? 'unknown',
+          athlete: activeProfile?.name ?? 'Atleta',
+        }));
+
+        // Fix: invia frame nel formato flat atteso dal Pi a 2 Hz
         sendRef.current = setInterval(() => {
           if (ws.readyState !== WebSocket.OPEN) return;
-          const { physics: p, sensor: s, isRecording: rec, activeAthleteId: aid } = useStore.getState();
+          const {
+            physics: p, sensor: s, batteryPct: bat,
+            currentLap: lap, pairedDeviceId: devId,
+            activeAthleteId: aid, athleteProfiles: profiles,
+          } = useStore.getState();
+
+          if (!p.valid) return;
+
+          const athleteName = profiles.find((x) => x.id === aid)?.name ?? 'Atleta';
+          // vento = velocità aria relativa − velocità a terra (componente frontale)
+          const wind = Math.max(0, +(p.vAirMs - s.speedMs).toFixed(2));
+
           ws.send(JSON.stringify({
-            t: Date.now(),
-            athleteId: aid,
-            recording: rec,
-            physics: p,
-            sensor: s,
+            t:       Date.now(),
+            device:  devId ?? 'unknown',
+            athlete: athleteName,
+            lap,
+            CdA:     +p.cda.toFixed(4),
+            pwr:     Math.round(s.powerW),
+            spd:     +(s.speedMs * 3.6).toFixed(1),   // m/s → km/h
+            hr:      s.hrBpm,
+            cad:     s.cadenceRpm,
+            wind,
+            battery: bat,
+            pctAero: +p.pctAero.toFixed(1),
           }));
         }, 500);
+      };
+
+      // Fix: gestisce comandi START / STOP / LAP inviati dal coach
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'cmd') {
+            if      (msg.action === 'start') useStore.getState().startSession();
+            else if (msg.action === 'stop')  useStore.getState().stopSession();
+            else if (msg.action === 'lap')   useStore.getState().addLap();
+          }
+        } catch {}
       };
 
       ws.onerror = () => {
@@ -76,7 +123,6 @@ export function CoachScreen() {
       ws.onclose = () => {
         if (sendRef.current) { clearInterval(sendRef.current); sendRef.current = null; }
         setStatus('error');
-        // Riconnessione automatica dopo 5s
         reconnectRef.current = setTimeout(() => connect(targetUrl), 5000);
       };
     } catch (e: any) {
@@ -120,7 +166,7 @@ export function CoachScreen() {
           style={styles.input}
           value={url}
           onChangeText={setUrl}
-          placeholder="ws://192.168.1.x:3000"
+          placeholder="ws://192.168.8.1:8080/coach"
           placeholderTextColor={Colors.muted}
           autoCapitalize="none"
           autoCorrect={false}
@@ -161,22 +207,32 @@ export function CoachScreen() {
              'Non connesso'}
           </Text>
         </View>
+        {status === 'connected' && (
+          <View style={styles.infoRow}>
+            <Text style={styles.infoText}>
+              {athleteProfiles.find((p) => p.id === activeAthleteId)?.name ?? 'Atleta'}
+              {'  •  Lap '}{currentLap}
+              {isRecording ? '  •  REC' : ''}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* ── Dati live riassuntivi ── */}
       <Text style={styles.sectionTitle}>Dati live</Text>
       <View style={styles.dataGrid}>
-        <DataBox label="CdA live"     value={physics.valid ? physics.cda.toFixed(3) : '–'} color={Colors.teal}  />
-        <DataBox label="CdA avg 10s"  value={avgCda > 0 ? avgCda.toFixed(3) : '–'}         color={Colors.teal}  />
-        <DataBox label="Potenza"      value={sensor.powerW > 0 ? `${sensor.powerW.toFixed(0)} W` : '–'} color={Colors.amber} />
-        <DataBox label="HR"           value={sensor.hrBpm > 0 ? `${sensor.hrBpm} bpm` : '–'}            color={Colors.red}   />
-        <DataBox label="Velocità"     value={sensor.speedMs > 0 ? `${(sensor.speedMs * 3.6).toFixed(1)} km/h` : '–'} color={Colors.blue} />
-        <DataBox label="v aria"       value={physics.vAirMs > 0 ? `${(physics.vAirMs * 3.6).toFixed(1)} km/h` : '–'} color={Colors.muted} />
+        <DataBox label="CdA live"    value={physics.valid ? physics.cda.toFixed(3) : '–'} color={Colors.teal}  />
+        <DataBox label="CdA avg 10s" value={avgCda > 0 ? avgCda.toFixed(3) : '–'}         color={Colors.teal}  />
+        <DataBox label="Potenza"     value={sensor.powerW > 0 ? `${sensor.powerW.toFixed(0)} W` : '–'} color={Colors.amber} />
+        <DataBox label="HR"          value={sensor.hrBpm > 0 ? `${sensor.hrBpm} bpm` : '–'}            color={Colors.red}   />
+        <DataBox label="Velocità"    value={sensor.speedMs > 0 ? `${(sensor.speedMs * 3.6).toFixed(1)} km/h` : '–'} color={Colors.blue} />
+        <DataBox label="Vento"       value={physics.vAirMs > sensor.speedMs ? `${(physics.vAirMs - sensor.speedMs).toFixed(1)} m/s` : '0.0 m/s'} color={Colors.muted} />
       </View>
 
       <Text style={styles.note}>
-        Il coach dashboard riceve i dati a 2 Hz via WebSocket.
-        {isRecording && '  •  Sessione in registrazione'}
+        Dati inviati a 2 Hz via WebSocket.
+        {isRecording ? '  •  Sessione in registrazione' : ''}
+        {'\n'}Batteria: {batteryPct > 0 ? `${batteryPct}%` : '—'}
       </Text>
     </ScrollView>
   );
@@ -237,6 +293,9 @@ const styles = StyleSheet.create({
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: Sp.sm },
   dot:       { width: 8, height: 8, borderRadius: 4 },
   statusText:{ fontSize: 14, color: Colors.text, flex: 1 },
+
+  infoRow:  { paddingTop: 2 },
+  infoText: { fontSize: 11, color: Colors.muted, fontVariant: ['tabular-nums'] },
 
   dataGrid: {
     flexDirection: 'row',

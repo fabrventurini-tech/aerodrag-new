@@ -2,13 +2,20 @@
  * useBLE.ts
  * Hook React Native per connessione BLE al device AeroDrag.
  *
- * UUID servizi/caratteristiche (devono corrispondere al firmware ESP32):
+ * UUID servizi/caratteristiche (firmware ESP32 ble_server.h):
  *   Servizio principale: 0000aa00-0000-1000-8000-00805f9b34fb
- *   0000aa01 → Pitot + pressione statica  (float32 x2, 10 Hz)
- *   0000aa02 → IMU pitch + roll           (float32 x2, 10 Hz)
- *   0000aa03 → Ambiente temp/hum/alt      (float32 x3,  1 Hz)
- *   0000aa04 → Sensori esterni power/cad/hr/speed (packed uint8/16, 4 Hz)
- *   0000aa05 → Batteria                   (uint8, 0.1 Hz)
+ *   0000aa01 → Pitot + pressione statica      (float32 ×2: pitotPa, staticPa)
+ *   0000aa02 → IMU pitch + roll               (float32 ×2: pitch, roll)
+ *   0000aa03 → Ambiente + velocità            (float32 ×4: temp, humidity×100, alt, speed_ms)
+ *   0000aa04 → ANT+ power/cad/hr              (uint16 power + uint8 cad + uint8 hr = 4 B)
+ *   0000aa05 → Identità device (R/W)          (device_id[18] + athlete_name[32])
+ *   0000aa06 → Versione firmware (R)          (stringa ASCII)
+ *   0000aa07 → OTA trigger (W)                (URL HTTP del .bin)
+ *
+ * Note:
+ *   - La velocità arriva da 0xaa03[3] come float32 m/s, NON da 0xaa04.
+ *   - La batteria NON è esposta via BLE; compare solo nei frame Wi-Fi coach.
+ *   - Scrivere il nome atleta su 0xaa05 sincronizza il display e i frame coach.
  */
 
 import { useEffect, useRef } from 'react';
@@ -18,12 +25,12 @@ import { Buffer } from 'buffer';
 import { useStore } from '../store';
 
 // ── UUID ──────────────────────────────────────────────────────────────────────
-const SVC     = '0000aa00-0000-1000-8000-00805f9b34fb';
-const CHR_PITOT   = '0000aa01-0000-1000-8000-00805f9b34fb';
-const CHR_IMU     = '0000aa02-0000-1000-8000-00805f9b34fb';
-const CHR_ENV     = '0000aa03-0000-1000-8000-00805f9b34fb';
-const CHR_SENSORS = '0000aa04-0000-1000-8000-00805f9b34fb';
-const CHR_BATTERY = '0000aa05-0000-1000-8000-00805f9b34fb';
+const SVC          = '0000aa00-0000-1000-8000-00805f9b34fb';
+const CHR_PITOT    = '0000aa01-0000-1000-8000-00805f9b34fb';
+const CHR_IMU      = '0000aa02-0000-1000-8000-00805f9b34fb';
+const CHR_ENV      = '0000aa03-0000-1000-8000-00805f9b34fb';
+const CHR_SENSORS  = '0000aa04-0000-1000-8000-00805f9b34fb';
+const CHR_IDENTITY = '0000aa05-0000-1000-8000-00805f9b34fb';
 
 // ── Parsing pacchetti BLE ─────────────────────────────────────────────────────
 
@@ -47,18 +54,19 @@ function parseEnv(b64: string) {
   const buf = Buffer.from(b64, 'base64');
   return {
     tempC:    buf.readFloatLE(0),
-    humidity: buf.readFloatLE(4) / 100,  // firmware invia 0-100
+    humidity: buf.readFloatLE(4) / 100,  // firmware sends 0-100
     altM:     buf.readFloatLE(8),
+    speedMs:  buf.readFloatLE(12),        // firmware sends float m/s at offset 12
   };
 }
 
 function parseSensors(b64: string) {
   const buf = Buffer.from(b64, 'base64');
+  // firmware CHR_ANT = power(2) + cad(1) + hr(1) = 4 bytes; speed is NOT here
   return {
     powerW:     buf.readUInt16LE(0),
     cadenceRpm: buf.readUInt8(2),
     hrBpm:      buf.readUInt8(3),
-    speedMs:    buf.readUInt16LE(4) / 100,  // firmware invia cm/s
   };
 }
 
@@ -73,7 +81,7 @@ export function useBLE() {
   const pairedIdRef    = useRef<string | null>(null);
 
   const {
-    setBleStatus, setBattery, updateSensors,
+    setBleStatus, updateSensors,
     tick, isSimMode, pairedDeviceId,
   } = useStore();
 
@@ -111,12 +119,9 @@ export function useBLE() {
 
     subscribe(CHR_PITOT,   (v) => updateSensors(parsePitot(v)));
     subscribe(CHR_IMU,     (v) => updateSensors(parseIMU(v)));
-    subscribe(CHR_ENV,     (v) => updateSensors(parseEnv(v)));
+    subscribe(CHR_ENV,     (v) => updateSensors(parseEnv(v)));   // includes speedMs
     subscribe(CHR_SENSORS, (v) => updateSensors(parseSensors(v)));
-    subscribe(CHR_BATTERY, (v) => {
-      const buf = Buffer.from(v, 'base64');
-      setBattery(buf.readUInt8(0));
-    });
+    // CHR_IDENTITY (0x05aa) is READ+WRITE only — read once in connect(), not here
   }
 
   // ── Connessione ────────────────────────────────────────────────────────────
@@ -128,6 +133,19 @@ export function useBLE() {
       deviceRef.current = connected;
       setBleStatus('connected');
       subscribeAll(connected);
+
+      // Write active athlete name to firmware NVS (shown on display and in coach frames)
+      const state         = useStore.getState();
+      const activeProfile = state.athleteProfiles.find((p) => p.id === state.activeAthleteId);
+      const athleteName   = activeProfile?.name ?? '';
+      if (athleteName) {
+        try {
+          const nameBytes = Buffer.from(athleteName.slice(0, 31), 'utf8');
+          await connected.writeCharacteristicWithResponseForService(
+            SVC, CHR_IDENTITY, nameBytes.toString('base64')
+          );
+        } catch {}
+      }
 
       // Rilevamento disconnessione
       disconnectSub.current?.remove();
