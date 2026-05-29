@@ -7,8 +7,8 @@ import { useStore } from '../store';
 import {
   loadPairedDevice, unpairDevice, loadSensorWhitelist,
   removeSensorFromWhitelist, clearSensorWhitelist,
-  loadPreferredWheelSensor, removePreferredWheelSensor,
-  savePreferredWheelSensor,
+  loadWheelSensorList, removeWheelSensor,
+  loadActiveWheelSensorId, setActiveWheelSensorId,
   PairedDevice, SensorEntry, WheelSensorDevice,
 } from '../security/pairing';
 import { QRPairScreen } from './QRPairScreen';
@@ -24,14 +24,24 @@ export function SettingsScreen() {
 
   const [pairedDevice, setPairedDevice]     = useState<PairedDevice | null>(null);
   const [sensorList, setSensorList]         = useState<SensorEntry[]>([]);
-  const [wheelSensor, setWheelSensor]       = useState<WheelSensorDevice | null>(null);
+  const [wheelSensors, setWheelSensors]     = useState<WheelSensorDevice[]>([]);
+  const [activeWheelId, setActiveWheelId]   = useState<string | null>(null);
   const [showScanner, setShowScanner]       = useState(false);
   const [showCrrCalib, setShowCrrCalib]     = useState(false);
+
+  const refreshWheelSensors = async () => {
+    const [list, activeId] = await Promise.all([
+      loadWheelSensorList(),
+      loadActiveWheelSensorId(),
+    ]);
+    setWheelSensors(list);
+    setActiveWheelId(activeId ?? list[0]?.id ?? null);
+  };
 
   useEffect(() => {
     loadPairedDevice().then(setPairedDevice);
     loadSensorWhitelist().then(setSensorList);
-    loadPreferredWheelSensor().then(setWheelSensor);
+    refreshWheelSensors();
   }, []);
 
   async function handleUnpair() {
@@ -63,22 +73,27 @@ export function SettingsScreen() {
     setSensorList([]);
   }
 
-  async function handleRemoveWheelSensor() {
+  async function handleRemoveWheelSensor(id: string, name: string) {
     Alert.alert(
-      'Rimuovi sensore ruota',
-      'Il sensore preferito verrà rimosso. L\'app si connetterà al primo sensore disponibile.',
+      'Rimuovi sensore',
+      `Rimuovere "${name}" dalla lista?`,
       [
         { text: 'Annulla', style: 'cancel' },
         {
           text: 'Rimuovi',
           style: 'destructive',
           onPress: async () => {
-            await removePreferredWheelSensor();
-            setWheelSensor(null);
+            await removeWheelSensor(id);
+            await refreshWheelSensors();
           },
         },
       ]
     );
+  }
+
+  async function handleSetActiveWheelSensor(id: string) {
+    await setActiveWheelSensorId(id);
+    setActiveWheelId(id);
   }
 
   const lastCrr = crrCalib.result ?? crrCalib.history[0] ?? null;
@@ -131,9 +146,11 @@ export function SettingsScreen() {
         onPaired={(device) => setPairedDevice(device)}
       />
 
-      {/* ── Sensore ruota Crr ── */}
-      <Text style={styles.sectionTitle}>Sensore Ruota — Crr</Text>
+      {/* ── Sensori Ruota Crr ── */}
+      <Text style={styles.sectionTitle}>Sensori Ruota — Crr</Text>
       <View style={styles.card}>
+
+        {/* Stato connessione live */}
         <View style={styles.row}>
           <View style={[styles.dot, {
             backgroundColor: wheelConnected ? Colors.teal :
@@ -141,23 +158,54 @@ export function SettingsScreen() {
           }]} />
           <Text style={styles.deviceName}>
             {wheelConnected
-              ? (wheelSensor?.name ?? 'AeroDrag Wheel')
+              ? `Connesso${wheelSensorId ? ` · ${wheelSensorId.slice(-5)}` : ''}`
               : wheelSensorStatus === 'scanning'
                 ? 'Ricerca sensore…'
-                : 'Sensore non connesso'}
+                : 'Nessun sensore attivo'}
           </Text>
         </View>
 
-        {wheelSensor && (
-          <Text style={styles.deviceId}>{wheelSensor.id}</Text>
-        )}
-
         <Text style={styles.hint}>
-          Il sensore ruota usa pairing non esclusivo: Wahoo, Garmin e altre app
-          leggono la velocità tramite il profilo CSC standard. AeroDrag accede
-          ai dati IMU ad alta frequenza per il calcolo del Crr.
+          Il sensore usa pairing multiplo non esclusivo: fino a 3 centrali
+          simultanei (es. app atleta + app coach + Garmin). Wahoo e Garmin
+          leggono la velocità via profilo CSC standard senza configurazione.
         </Text>
 
+        {/* Lista sensori registrati */}
+        {wheelSensors.length > 0 && (
+          <>
+            <Text style={styles.subSectionLabel}>Sensori registrati</Text>
+            {wheelSensors.map((s) => (
+              <View key={s.id} style={styles.wheelSensorRow}>
+                <TouchableOpacity
+                  style={styles.wheelSensorLeft}
+                  onPress={() => handleSetActiveWheelSensor(s.id)}
+                >
+                  <View style={[styles.radioOuter, s.id === activeWheelId && styles.radioActive]}>
+                    {s.id === activeWheelId && <View style={styles.radioInner} />}
+                  </View>
+                  <View style={styles.wheelSensorInfo}>
+                    <Text style={styles.wheelSensorName}>{s.name}</Text>
+                    {s.bikeLabel && <Text style={styles.wheelSensorBike}>{s.bikeLabel}</Text>}
+                    <Text style={styles.deviceId}>{s.id}</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleRemoveWheelSensor(s.id, s.name)}>
+                  <Text style={styles.removeText}>Rimuovi</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </>
+        )}
+
+        {wheelSensors.length === 0 && (
+          <Text style={styles.emptyText}>
+            Nessun sensore registrato.{'\n'}
+            Il sensore viene aggiunto automaticamente al primo collegamento.
+          </Text>
+        )}
+
+        {/* Ultimo Crr */}
         {lastCrr && (
           <View style={styles.crrRow}>
             <Text style={styles.crrLabel}>Ultimo Crr misurato</Text>
@@ -172,12 +220,6 @@ export function SettingsScreen() {
         >
           <Text style={styles.primaryBtnText}>Calibra Crr</Text>
         </TouchableOpacity>
-
-        {wheelSensor && (
-          <TouchableOpacity style={styles.dangerBtn} onPress={handleRemoveWheelSensor}>
-            <Text style={styles.dangerText}>Rimuovi sensore preferito</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
       <CrrCalibrationScreen
@@ -407,6 +449,45 @@ const styles = StyleSheet.create({
   switchLabel: { fontSize: 13, color: Colors.text },
   switchHint:  { fontSize: 11, color: Colors.muted },
 
+  subSectionLabel: {
+    fontSize:      11,
+    color:         Colors.muted,
+    marginTop:     Sp.xs,
+    marginBottom:  2,
+  },
+  wheelSensorRow: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    justifyContent: 'space-between',
+    paddingVertical: Sp.sm,
+    borderBottomWidth: 0.5,
+    borderBottomColor: Colors.border,
+  },
+  wheelSensorLeft: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           Sp.sm,
+    flex:          1,
+  },
+  wheelSensorInfo: { gap: 2, flex: 1 },
+  wheelSensorName: { fontSize: 13, color: Colors.text, fontWeight: '600' },
+  wheelSensorBike: { fontSize: 11, color: Colors.teal },
+  radioOuter: {
+    width:        18,
+    height:       18,
+    borderRadius: 9,
+    borderWidth:  1.5,
+    borderColor:  Colors.muted,
+    alignItems:   'center',
+    justifyContent: 'center',
+  },
+  radioActive: { borderColor: Colors.teal },
+  radioInner: {
+    width:           9,
+    height:          9,
+    borderRadius:    5,
+    backgroundColor: Colors.teal,
+  },
   crrRow: {
     flexDirection:  'row',
     alignItems:     'center',

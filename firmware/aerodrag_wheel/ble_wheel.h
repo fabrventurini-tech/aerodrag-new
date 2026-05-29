@@ -2,20 +2,34 @@
  * ble_wheel.h
  * Definizione servizi e caratteristiche BLE per AeroDrag Wheel Sensor.
  *
- * Design pairing NON esclusivo:
+ * Design pairing NON esclusivo e MULTIPLO:
  *   - Nessun bonding richiesto (open BLE)
- *   - Il sensore accetta connessioni da qualsiasi centrale
- *   - Il profilo CSC standard (0x1816) è sempre accessibile a tutti
- *   - Il servizio AeroDrag (0xBB00) è accessibile senza autenticazione
- *   - Il dispositivo non filtra il MAC del master → compatibile con
- *     Wahoo, Garmin, Strava, AeroDrag app, più device simultanei
+ *   - Il sensore accetta fino a MAX_PRPH_CONNECTIONS centrali simultanee
+ *   - Dopo ogni nuova connessione il sensore continua ad advertise
+ *     → un secondo (o terzo) dispositivo può connettersi mentre il primo
+ *       è già collegato
+ *   - Notifiche inviate a TUTTI i centrali connessi in broadcast
+ *   - Esempi di connessioni simultanee:
+ *       • Telefono atleta (AeroDrag app) + Garmin Edge → velocità CSC
+ *       • Telefono atleta + tablet coach → dati IMU/Crr in parallelo
+ *       • Due telefoni su bici tandem / team pacing
  *
  * Framework: Adafruit Bluefruit nRF52 Arduino BSP
- * (BLEService / BLECharacteristic API)
  */
 
 #pragma once
 #include <bluefruit.h>
+
+// ── Configurazione multi-connessione ─────────────────────────────────────────
+//
+// SoftDevice S140 (nRF52840): max 8 connessioni periferica
+// Usiamo 3 come valore pratico: atleta + coach + Garmin/Wahoo
+// Aumentabile fino a 8 (richiede più RAM, configura in linkerscript se necessario)
+//
+// RAM necessaria ≈ MAX_PRPH_CONNECTIONS × 700 byte (stack S140)
+// Con 3 connessioni: ~2.1 kB extra — ampiamente entro la RAM disponibile (256 kB)
+
+#define MAX_PRPH_CONNECTIONS  3
 
 // ── UUID servizi ─────────────────────────────────────────────────────────────
 
@@ -103,17 +117,45 @@ void configWriteCallback(uint16_t connHdl, BLECharacteristic* chr,
   }
 }
 
+// ── Callback connect / disconnect ────────────────────────────────────────────
+//
+// Quando un nuovo centrale si connette, si riavvia immediatamente l'advertising
+// così che un secondo (o terzo) dispositivo possa ancora trovare il sensore.
+// Quando tutti i centrali si disconnettono, l'advertising è già attivo.
+
+void connectCallback(uint16_t connHdl) {
+  // Riavvia advertising per permettere ulteriori connessioni
+  // (fino a MAX_PRPH_CONNECTIONS simultaneous)
+  BLEConnection* conn = Bluefruit.Connection(connHdl);
+  char devName[32] = {0};
+  conn->getPeerName(devName, sizeof(devName));
+  // (debug: Serial.print) — non incluso in release build
+
+  if (Bluefruit.Advertising.isRunning() == false) {
+    Bluefruit.Advertising.start(0);  // ricomincia advertising indefinitamente
+  }
+}
+
+void disconnectCallback(uint16_t connHdl, uint8_t reason) {
+  // Advertising ripartirà in automatico grazie a restartOnDisconnect(true)
+  // Non c'è nulla da fare qui, ma il callback è utile per debug
+  (void)connHdl; (void)reason;
+}
+
 // ── Inizializzazione BLE ──────────────────────────────────────────────────────
 
 void bleSetup(const char* deviceName) {
-  Bluefruit.begin();
+  // MAX_PRPH_CONNECTIONS centrali simultanee, 0 connessioni come centrale
+  Bluefruit.begin(MAX_PRPH_CONNECTIONS, 0);
   Bluefruit.setTxPower(4);               // +4 dBm (~50 m range)
   Bluefruit.setName(deviceName);
 
-  // Nessun bonding — pairing NON esclusivo
-  // Il sensore accetta qualsiasi centrale senza autenticazione
+  // Nessun bonding — pairing NON esclusivo e MULTIPLO
   Bluefruit.Security.setEncryption(false);
   Bluefruit.Security.setBondable(false);
+
+  Bluefruit.setConnectCallback(connectCallback);
+  Bluefruit.setDisconnectCallback(disconnectCallback);
 
   // ── Servizio CSC (0x1816) ─────────────────────────────────────────────────
   svcCSC.begin();
@@ -190,35 +232,53 @@ void bleSetup(const char* deviceName) {
   Bluefruit.Advertising.addService(svcCSC);       // CSC nel pacchetto primario
   Bluefruit.Advertising.addName();
   Bluefruit.ScanResponse.addService(svcWheel);    // BB00 nel scan response
+
+  // restartOnDisconnect: torna ad advertise quando UN centrale si disconnette
+  // Il connectCallback() invece riavvia l'advertising anche DURANTE una
+  // connessione attiva → permette al 2° e 3° centrale di trovarci
   Bluefruit.Advertising.restartOnDisconnect(true);
-  Bluefruit.Advertising.setInterval(160, 400);    // 100–250 ms
+  Bluefruit.Advertising.setInterval(32, 160);     // 20–100 ms (più frequente per multi-device)
   Bluefruit.Advertising.setFastTimeout(30);
   Bluefruit.Advertising.start(0);                 // advertise per sempre
 }
 
-// ── Helper invio notifiche ────────────────────────────────────────────────────
+// ── Helper invio notifiche — broadcast a TUTTI i centrali connessi ────────────
+//
+// Itera su tutti gli slot di connessione (0 … MAX_PRPH_CONNECTIONS-1).
+// Per ogni handle attivo invia la notifica solo se il centrale ha abilitato
+// il CCCD (Client Characteristic Configuration Descriptor) per quella chr.
+// In questo modo Garmin (che abilita solo CSC) non riceve il BB01 stream,
+// e l'app AeroDrag (che abilita BB01) non riceve notifiche CSC non richieste.
 
 void sendCSCMeasurement(uint32_t cumRevs, uint16_t lastEvtTime) {
-  if (!chrCSCMeas.notifyEnabled(Bluefruit.connHandle())) return;
   uint8_t buf[7];
-  buf[0] = 0x01;                    // flags: wheel rev present
+  buf[0] = 0x01;
   buf[1] = cumRevs & 0xFF;
   buf[2] = (cumRevs >> 8)  & 0xFF;
   buf[3] = (cumRevs >> 16) & 0xFF;
   buf[4] = (cumRevs >> 24) & 0xFF;
   buf[5] = lastEvtTime & 0xFF;
   buf[6] = (lastEvtTime >> 8) & 0xFF;
-  chrCSCMeas.notify(buf, 7);
+
+  for (uint16_t hdl = 0; hdl < MAX_PRPH_CONNECTIONS; hdl++) {
+    if (Bluefruit.connected(hdl) && chrCSCMeas.notifyEnabled(hdl)) {
+      chrCSCMeas.notify(hdl, buf, 7);
+    }
+  }
 }
 
 void sendStream(float speedMs, float accelMs2, float tempC, float vibRMS) {
-  if (!chrStream.notifyEnabled(Bluefruit.connHandle())) return;
   uint8_t buf[16];
   memcpy(buf,      &speedMs,  4);
   memcpy(buf + 4,  &accelMs2, 4);
   memcpy(buf + 8,  &tempC,    4);
   memcpy(buf + 12, &vibRMS,   4);
-  chrStream.notify(buf, 16);
+
+  for (uint16_t hdl = 0; hdl < MAX_PRPH_CONNECTIONS; hdl++) {
+    if (Bluefruit.connected(hdl) && chrStream.notifyEnabled(hdl)) {
+      chrStream.notify(hdl, buf, 16);
+    }
+  }
 }
 
 void sendCrrResult(float crr, uint8_t quality, uint8_t runIdx) {
@@ -226,5 +286,22 @@ void sendCrrResult(float crr, uint8_t quality, uint8_t runIdx) {
   memcpy(buf, &crr, 4);
   buf[4] = quality;
   buf[5] = runIdx;
-  chrCrrRes.notify(buf, 6);
+
+  for (uint16_t hdl = 0; hdl < MAX_PRPH_CONNECTIONS; hdl++) {
+    if (Bluefruit.connected(hdl) && chrCrrRes.notifyEnabled(hdl)) {
+      chrCrrRes.notify(hdl, buf, 6);
+    }
+  }
 }
+
+// ── Utilità: numero di centrali attualmente connessi ─────────────────────────
+
+uint8_t connectedCount() {
+  uint8_t count = 0;
+  for (uint16_t hdl = 0; hdl < MAX_PRPH_CONNECTIONS; hdl++) {
+    if (Bluefruit.connected(hdl)) count++;
+  }
+  return count;
+}
+
+bool anyConnected() { return connectedCount() > 0; }

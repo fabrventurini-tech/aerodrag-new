@@ -38,7 +38,10 @@ import { Platform, PermissionsAndroid } from 'react-native';
 import { BleManager, Device, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 import { useStore } from '../store';
-import { loadPreferredWheelSensor } from '../security/pairing';
+import {
+  loadPreferredWheelSensor, saveWheelSensor, loadActiveWheelSensorId,
+  setActiveWheelSensorId,
+} from '../security/pairing';
 
 // ── UUID ──────────────────────────────────────────────────────────────────────
 
@@ -95,10 +98,17 @@ export function useWheelSensor() {
     wheelSensorId,
   } = useStore();
 
-  // Sync preferred device from storage on mount
+  // Carica il sensore attivo (preferito) dallo storage al mount
   useEffect(() => {
-    loadPreferredWheelSensor().then((d) => {
-      preferredIdRef.current = d?.id ?? null;
+    loadActiveWheelSensorId().then((id) => {
+      if (id) {
+        preferredIdRef.current = id;
+      } else {
+        // Fallback: prende il primo della lista se nessuno esplicitamente attivo
+        loadPreferredWheelSensor().then((d) => {
+          preferredIdRef.current = d?.id ?? null;
+        });
+      }
     });
   }, []);
 
@@ -149,6 +159,12 @@ export function useWheelSensor() {
       setWheelSensorId(device.id);
       setWheelSensorStatus('connected');
       subscribeAll(connected);
+
+      // Salva nella lista dei sensori noti e imposta come attivo
+      // (operazione idempotente: aggiorna se già presente)
+      const name = device.name ?? `AeroDrag Wheel ${device.id.slice(-5)}`;
+      saveWheelSensor({ id: device.id, name, pairedAt: Date.now() });
+      setActiveWheelSensorId(device.id);
 
       disconnectSub.current?.remove();
       disconnectSub.current = connected.onDisconnected(() => {

@@ -26,7 +26,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const KEY_PAIRED_DEVICE    = 'aerodrag:paired_device_id';
 const KEY_PAIRED_NAME      = 'aerodrag:paired_device_name';
 const KEY_SENSOR_WHITELIST = 'aerodrag:sensor_whitelist';
-const KEY_WHEEL_SENSOR     = 'aerodrag:wheel_sensor';
+const KEY_WHEEL_SENSORS    = 'aerodrag:wheel_sensors';      // lista sensori ruota
+const KEY_WHEEL_ACTIVE_ID  = 'aerodrag:wheel_active_id';   // ID del sensore preferito
+// KEY_WHEEL_SENSOR (legacy, singolo) letto in migrazione automatica
+const KEY_WHEEL_SENSOR_OLD = 'aerodrag:wheel_sensor';
 
 export interface PairedDevice {
   id:   string;   // MAC address BLE del device AeroDrag
@@ -93,40 +96,101 @@ export async function clearSensorWhitelist(): Promise<void> {
   await AsyncStorage.removeItem(KEY_SENSOR_WHITELIST);
 }
 
-// ── Wheel sensor (sensore ruota Crr) — pairing non esclusivo ─────────────────
+// ── Wheel sensor (sensore ruota Crr) — pairing non esclusivo e MULTIPLO ──────
 //
-// Design pairing non esclusivo:
-//   - Nessun BLE bonding → il sensore accetta connessioni da chiunque
-//   - L'app salva solo il MAC "preferito" per il riconoscimento automatico
-//   - Durante lo scan, l'app accetta QUALSIASI sensore con servizio BB00
-//     (ma mostra prima quello preferito se visibile)
-//   - Nessun filtro di sicurezza MAC → un atleta può avere il sensore
-//     letto da più device (coach + telefono personale) simultaneamente
-//   - Il sensore espone anche il profilo CSC standard (0x1816) → Wahoo,
-//     Garmin, Strava lo leggono come un normale sensore velocità
+// Design:
+//   - L'app mantiene una LISTA di sensori ruota registrati (per bici diverse)
+//   - Uno dei sensori è "attivo" → l'app lo preferisce durante la scan
+//   - Il sensore firmware accetta fino a 3 centrali simultanei (MAX_PRPH_CONNECTIONS)
+//   - Non c'è bonding → qualsiasi app (Wahoo, Garmin, coach, atleta) si connette
+//   - Lato app, la lista serve solo come "memoria" per identificare rapidamente
+//     un sensore già visto — non è un filtro di sicurezza
+//
+// Casi d'uso multi-sensore:
+//   • Atleta con 2 bici → sensore ruota A (bici strada) + B (bici crono)
+//   • Team con più atleti → ogni atleta ha il suo sensore, il coach switcha
+//   • Coaching remoto → coach e atleta connettono entrambi allo stesso sensore
 
 export interface WheelSensorDevice {
-  id:        string;   // MAC address BLE del sensore ruota
-  name:      string;   // nome human-readable (es. "AeroDrag Wheel #01")
+  id:        string;   // MAC address BLE
+  name:      string;   // es. "Wheel Bici Strada", "Wheel Bici Crono"
   pairedAt:  number;   // timestamp Unix
   firmware?: string;
+  bikeLabel?: string;  // etichetta opzionale (es. "Factor O2", "Cervélo P5")
 }
 
-export async function savePreferredWheelSensor(device: WheelSensorDevice): Promise<void> {
-  await AsyncStorage.setItem(KEY_WHEEL_SENSOR, JSON.stringify(device));
-}
-
-export async function loadPreferredWheelSensor(): Promise<WheelSensorDevice | null> {
+// Carica tutta la lista (con migrazione automatica dal formato legacy singolo)
+export async function loadWheelSensorList(): Promise<WheelSensorDevice[]> {
   try {
-    const raw = await AsyncStorage.getItem(KEY_WHEEL_SENSOR);
-    return raw ? JSON.parse(raw) : null;
+    const raw = await AsyncStorage.getItem(KEY_WHEEL_SENSORS);
+    if (raw) return JSON.parse(raw) as WheelSensorDevice[];
+
+    // Migrazione: se esiste il vecchio formato singolo, lo importa nella lista
+    const legacy = await AsyncStorage.getItem(KEY_WHEEL_SENSOR_OLD);
+    if (legacy) {
+      const device = JSON.parse(legacy) as WheelSensorDevice;
+      const list = [device];
+      await AsyncStorage.setItem(KEY_WHEEL_SENSORS, JSON.stringify(list));
+      await AsyncStorage.removeItem(KEY_WHEEL_SENSOR_OLD);
+      return list;
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+// Aggiunge o aggiorna un sensore nella lista
+export async function saveWheelSensor(device: WheelSensorDevice): Promise<void> {
+  const list = await loadWheelSensorList();
+  const idx  = list.findIndex((s) => s.id === device.id);
+  const next = idx >= 0
+    ? list.map((s) => (s.id === device.id ? device : s))
+    : [...list, device];
+  await AsyncStorage.setItem(KEY_WHEEL_SENSORS, JSON.stringify(next));
+}
+
+// Rimuove un sensore dalla lista (e resetta active se era quello attivo)
+export async function removeWheelSensor(id: string): Promise<void> {
+  const list = await loadWheelSensorList();
+  const next = list.filter((s) => s.id !== id);
+  await AsyncStorage.setItem(KEY_WHEEL_SENSORS, JSON.stringify(next));
+  const activeId = await loadActiveWheelSensorId();
+  if (activeId === id) await AsyncStorage.removeItem(KEY_WHEEL_ACTIVE_ID);
+}
+
+// ID del sensore attivo (preferito durante la scan)
+export async function loadActiveWheelSensorId(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(KEY_WHEEL_ACTIVE_ID);
   } catch {
     return null;
   }
 }
 
+export async function setActiveWheelSensorId(id: string | null): Promise<void> {
+  if (id) await AsyncStorage.setItem(KEY_WHEEL_ACTIVE_ID, id);
+  else    await AsyncStorage.removeItem(KEY_WHEEL_ACTIVE_ID);
+}
+
+// Shortcut: carica il sensore attivo (o il primo della lista se nessuno attivo)
+export async function loadPreferredWheelSensor(): Promise<WheelSensorDevice | null> {
+  const list     = await loadWheelSensorList();
+  if (list.length === 0) return null;
+  const activeId = await loadActiveWheelSensorId();
+  return list.find((s) => s.id === activeId) ?? list[0];
+}
+
+// Compat legacy: alias per saveWheelSensor
+export async function savePreferredWheelSensor(device: WheelSensorDevice): Promise<void> {
+  await saveWheelSensor(device);
+  await setActiveWheelSensorId(device.id);
+}
+
+// Compat legacy: rimuove solo il sensore attivo
 export async function removePreferredWheelSensor(): Promise<void> {
-  await AsyncStorage.removeItem(KEY_WHEEL_SENSOR);
+  const active = await loadPreferredWheelSensor();
+  if (active) await removeWheelSensor(active.id);
 }
 
 // ── Validazione QR code device ────────────────────────────────────────────────

@@ -183,8 +183,8 @@ void loop() {
   }
 
   // ── Notifica CSC (ogni CSC_NOTIFY_EVERY campioni) ───────────────────────
-  // Protocollo CSC standard: compatibile con Wahoo, Garmin, Strava
-  if (Bluefruit.connected() && ++cscNotifyCnt >= CSC_NOTIFY_EVERY) {
+  // Inviata a tutti i centrali connessi che hanno abilitato le notifiche CSC
+  if (anyConnected() && ++cscNotifyCnt >= CSC_NOTIFY_EVERY) {
     cscNotifyCnt = 0;
     if (sig.speedMs > MIN_SPEED_MS) {
       sendCSCMeasurement(sig.cumulRevs, sig.lastEvtTime);
@@ -193,7 +193,7 @@ void loop() {
 
   // ── Notifica AeroDrag stream BB01 (a STREAM_RATE_HZ) ────────────────────
   const uint32_t nowMs = millis();
-  if (Bluefruit.connected() && (nowMs - lastStreamMs) >= (1000 / STREAM_RATE_HZ)) {
+  if (anyConnected() && (nowMs - lastStreamMs) >= (1000 / STREAM_RATE_HZ)) {
     lastStreamMs = nowMs;
     sendStream(sig.speedMs, sig.accelMs2, sig.tempC, sig.vibRMS);
 
@@ -278,12 +278,22 @@ void updateLed() {
   const  uint32_t nowMs      = millis();
 
   uint16_t blinkMs;
-  if (!Bluefruit.connected()) {
-    blinkMs = 1000;  // lento = advertising
+  const uint8_t nConn = connectedCount();
+  if (nConn == 0) {
+    blinkMs = 1000;  // lento = advertising, nessun centrale
   } else if (runState == RunState::ACTIVE) {
-    blinkMs = 150;   // veloce = run in corso
+    blinkMs = 150;   // veloce = run coast-down in corso
+  } else if (nConn >= 2) {
+    // Due lampeggi brevi ravvicinati = multi-connessione attiva
+    static uint8_t phase = 0;
+    static uint32_t t0 = 0;
+    if (nowMs - t0 > (phase % 2 == 0 ? 150 : (phase == 1 ? 150 : 600))) {
+      t0 = nowMs; phase = (phase + 1) % 4;
+      digitalWrite(PIN_LED_BLE, (phase < 2) ? HIGH : LOW);
+    }
+    return;
   } else {
-    // Acceso fisso = connesso idle
+    // Acceso fisso = 1 centrale connesso, idle
     digitalWrite(PIN_LED_BLE, HIGH);
     return;
   }
