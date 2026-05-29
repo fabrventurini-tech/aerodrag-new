@@ -25,6 +25,7 @@ export function LiveScreen() {
     physics, sensor, history, isRecording, elapsed,
     currentLap, startSession, stopSession, addLap,
     isSimMode, setSimMode,
+    crrSource, crrActive,
   } = useStore();
 
   const cdaHistory    = history.slice(-60).map((p) => p.physics.cda);
@@ -119,7 +120,10 @@ export function LiveScreen() {
             </Text>
           </View>
           <View style={styles.breakdownRow}>
-            <Text style={styles.breakdownLabel}>Rolling</Text>
+            <View style={styles.breakdownLabelGroup}>
+              <Text style={styles.breakdownLabel}>Rolling</Text>
+              <CrrBadge source={crrSource} crr={crrActive} />
+            </View>
             <Text style={styles.breakdownValue}>
               {fmt(physics.pRollingW, 0)} W
             </Text>
@@ -194,6 +198,42 @@ export function LiveScreen() {
   );
 }
 
+// ── Badge provenienza Crr ─────────────────────────────────────────────────────
+
+type CrrSource = 'default' | 'manual' | 'calibrated' | 'profile';
+
+const CRR_BADGE: Record<CrrSource, { label: string; color: string }> = {
+  default:    { label: 'stima',     color: Colors.amber },
+  manual:     { label: 'manuale',   color: Colors.muted },
+  calibrated: { label: 'misurato', color: Colors.teal  },
+  profile:    { label: 'profilo',   color: Colors.blue  },
+};
+
+function CrrBadge({ source, crr }: { source: CrrSource; crr: number }) {
+  const { label, color } = CRR_BADGE[source];
+  return (
+    <View style={[badgeStyles.pill, { borderColor: color + '60' }]}>
+      <Text style={[badgeStyles.crr, { color }]}>{crr.toFixed(4)}</Text>
+      <Text style={[badgeStyles.label, { color: color + 'aa' }]}>{label}</Text>
+    </View>
+  );
+}
+
+const badgeStyles = StyleSheet.create({
+  pill: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             4,
+    borderWidth:     0.5,
+    borderRadius:    Radius.sm,
+    paddingHorizontal: 5,
+    paddingVertical:   1,
+    marginLeft:      Sp.xs,
+  },
+  crr:   { fontSize: 10, fontVariant: ['tabular-nums'], fontWeight: '600' },
+  label: { fontSize: 9 },
+});
+
 const styles = StyleSheet.create({
   root:    { flex: 1, backgroundColor: Colors.bg },
   content: { padding: Sp.md, gap: Sp.sm, paddingBottom: Sp.xl },
@@ -221,10 +261,11 @@ const styles = StyleSheet.create({
     padding:         Sp.md,
     gap:             Sp.xs,
   },
-  breakdownTitle: { fontSize: 11, color: Colors.muted, textTransform: 'uppercase', marginBottom: Sp.xs },
-  breakdownRow:   { flexDirection: 'row', justifyContent: 'space-between' },
-  breakdownLabel: { fontSize: 13, color: Colors.text },
-  breakdownValue: { fontSize: 13, color: Colors.muted, fontVariant: ['tabular-nums'] },
+  breakdownTitle:      { fontSize: 11, color: Colors.muted, textTransform: 'uppercase', marginBottom: Sp.xs },
+  breakdownRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  breakdownLabelGroup: { flexDirection: 'row', alignItems: 'center' },
+  breakdownLabel:      { fontSize: 13, color: Colors.text },
+  breakdownValue:      { fontSize: 13, color: Colors.muted, fontVariant: ['tabular-nums'] },
 
   chartCard: {
     backgroundColor: Colors.s1,

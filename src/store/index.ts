@@ -125,6 +125,14 @@ interface AeroDragStore {
   // Calibrazione Crr
   crrCalib: CrrCalibState;
 
+  // Provenienza del Crr attivo — mostrata in LiveScreen
+  // 'default'    → 0.004 hardcoded, nessuna calibrazione
+  // 'manual'     → impostato manualmente in Impostazioni
+  // 'calibrated' → misurato dal sensore ruota AeroDrag
+  // 'profile'    → sovrascitto dal profilo atleta attivo
+  crrSource: 'default' | 'manual' | 'calibrated' | 'profile';
+  crrActive: number;  // valore Crr effettivamente usato nell'ultimo calcolo
+
   // Dati live
   sensor:  SensorInput;
   physics: PhysicsOutput;
@@ -204,6 +212,8 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   wheelSensorId:     null,
   wheelStream:       { speedMs: 0, accelMs2: 0, tempC: 20, vibRMS: 0 },
   crrCalib:          DEFAULT_CRR_CALIB,
+  crrSource:         'default',
+  crrActive:         DEFAULT_CALIB.crr,
   sensor:          EMPTY_SENSOR,
   physics:         EMPTY_PHYSICS,
   history:         [],
@@ -376,10 +386,22 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     );
     const mass = (activeProfile?.massRiderKg ?? calib.massRiderKg)
                + (activeProfile?.massBikeKg  ?? calib.massBikeKg);
-    const crr  = activeProfile?.crr ?? calib.crr;
-    const physics = computePhysics(next, mass, crr);
 
-    set({ sensor: next, physics });
+    // Determina il Crr attivo e la sua provenienza
+    let crr: number;
+    let crrSource: AeroDragStore['crrSource'];
+    if (activeProfile?.crr !== undefined) {
+      crr = activeProfile.crr;
+      crrSource = 'profile';
+    } else {
+      crr = calib.crr;
+      const hasCalibHistory = get().crrCalib.history.length > 0;
+      const isDefault = Math.abs(crr - DEFAULT_CALIB.crr) < 0.00001;
+      crrSource = isDefault && !hasCalibHistory ? 'default' : hasCalibHistory ? 'calibrated' : 'manual';
+    }
+
+    const physics = computePhysics(next, mass, crr);
+    set({ sensor: next, physics, crrSource, crrActive: crr });
   },
 
   tick: () => {
