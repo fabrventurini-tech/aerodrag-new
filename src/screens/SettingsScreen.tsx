@@ -7,21 +7,31 @@ import { useStore } from '../store';
 import {
   loadPairedDevice, unpairDevice, loadSensorWhitelist,
   removeSensorFromWhitelist, clearSensorWhitelist,
-  PairedDevice, SensorEntry,
+  loadPreferredWheelSensor, removePreferredWheelSensor,
+  savePreferredWheelSensor,
+  PairedDevice, SensorEntry, WheelSensorDevice,
 } from '../security/pairing';
 import { QRPairScreen } from './QRPairScreen';
+import { CrrCalibrationScreen } from './CrrCalibrationScreen';
 import { Colors, Sp, Radius } from '../theme';
 
 export function SettingsScreen() {
-  const { calib, setCalib, isSimMode, setSimMode, setPairedDevice: setStorePairedDevice } = useStore();
+  const {
+    calib, setCalib, isSimMode, setSimMode,
+    setPairedDevice: setStorePairedDevice,
+    wheelSensorStatus, wheelSensorId, crrCalib,
+  } = useStore();
 
   const [pairedDevice, setPairedDevice]     = useState<PairedDevice | null>(null);
   const [sensorList, setSensorList]         = useState<SensorEntry[]>([]);
+  const [wheelSensor, setWheelSensor]       = useState<WheelSensorDevice | null>(null);
   const [showScanner, setShowScanner]       = useState(false);
+  const [showCrrCalib, setShowCrrCalib]     = useState(false);
 
   useEffect(() => {
     loadPairedDevice().then(setPairedDevice);
     loadSensorWhitelist().then(setSensorList);
+    loadPreferredWheelSensor().then(setWheelSensor);
   }, []);
 
   async function handleUnpair() {
@@ -52,6 +62,27 @@ export function SettingsScreen() {
     await clearSensorWhitelist();
     setSensorList([]);
   }
+
+  async function handleRemoveWheelSensor() {
+    Alert.alert(
+      'Rimuovi sensore ruota',
+      'Il sensore preferito verrà rimosso. L\'app si connetterà al primo sensore disponibile.',
+      [
+        { text: 'Annulla', style: 'cancel' },
+        {
+          text: 'Rimuovi',
+          style: 'destructive',
+          onPress: async () => {
+            await removePreferredWheelSensor();
+            setWheelSensor(null);
+          },
+        },
+      ]
+    );
+  }
+
+  const lastCrr = crrCalib.result ?? crrCalib.history[0] ?? null;
+  const wheelConnected = wheelSensorStatus === 'connected';
 
   return (
     <ScrollView
@@ -98,6 +129,61 @@ export function SettingsScreen() {
         visible={showScanner}
         onClose={() => setShowScanner(false)}
         onPaired={(device) => setPairedDevice(device)}
+      />
+
+      {/* ── Sensore ruota Crr ── */}
+      <Text style={styles.sectionTitle}>Sensore Ruota — Crr</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={[styles.dot, {
+            backgroundColor: wheelConnected ? Colors.teal :
+              wheelSensorStatus === 'scanning' ? Colors.amber : Colors.muted
+          }]} />
+          <Text style={styles.deviceName}>
+            {wheelConnected
+              ? (wheelSensor?.name ?? 'AeroDrag Wheel')
+              : wheelSensorStatus === 'scanning'
+                ? 'Ricerca sensore…'
+                : 'Sensore non connesso'}
+          </Text>
+        </View>
+
+        {wheelSensor && (
+          <Text style={styles.deviceId}>{wheelSensor.id}</Text>
+        )}
+
+        <Text style={styles.hint}>
+          Il sensore ruota usa pairing non esclusivo: Wahoo, Garmin e altre app
+          leggono la velocità tramite il profilo CSC standard. AeroDrag accede
+          ai dati IMU ad alta frequenza per il calcolo del Crr.
+        </Text>
+
+        {lastCrr && (
+          <View style={styles.crrRow}>
+            <Text style={styles.crrLabel}>Ultimo Crr misurato</Text>
+            <Text style={styles.crrValue}>{lastCrr.crr.toFixed(4)}</Text>
+            <Text style={styles.crrConf}>{lastCrr.confidence}% conf.</Text>
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={[styles.primaryBtn, !wheelConnected && styles.btnDisabled]}
+          onPress={() => setShowCrrCalib(true)}
+        >
+          <Text style={styles.primaryBtnText}>Calibra Crr</Text>
+        </TouchableOpacity>
+
+        {wheelSensor && (
+          <TouchableOpacity style={styles.dangerBtn} onPress={handleRemoveWheelSensor}>
+            <Text style={styles.dangerText}>Rimuovi sensore preferito</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <CrrCalibrationScreen
+        visible={showCrrCalib}
+        onClose={() => setShowCrrCalib(false)}
+        sendCommand={async () => true}
       />
 
       {/* ── Sensori BLE accoppiati ── */}
@@ -320,4 +406,28 @@ const styles = StyleSheet.create({
   },
   switchLabel: { fontSize: 13, color: Colors.text },
   switchHint:  { fontSize: 11, color: Colors.muted },
+
+  crrRow: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    gap:            Sp.sm,
+    paddingVertical: Sp.xs,
+    borderTopWidth: 0.5,
+    borderTopColor: Colors.border,
+  },
+  crrLabel: { fontSize: 11, color: Colors.muted, flex: 1 },
+  crrValue: { fontSize: 18, color: Colors.teal, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  crrConf:  { fontSize: 11, color: Colors.amber },
+
+  primaryBtn: {
+    backgroundColor: Colors.tealBg,
+    borderRadius:    Radius.sm,
+    borderWidth:     0.5,
+    borderColor:     Colors.teal,
+    padding:         Sp.sm,
+    alignItems:      'center',
+    marginTop:       Sp.xs,
+  },
+  primaryBtnText: { color: Colors.teal, fontWeight: '600', fontSize: 13 },
+  btnDisabled: { opacity: 0.4 },
 });

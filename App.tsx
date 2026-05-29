@@ -5,6 +5,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { useBLE } from './src/hooks/useBLE';
+import { useWheelSensor } from './src/hooks/useWheelSensor';
 import { useStore } from './src/store';
 import { NavBar, Screen } from './src/components';
 
@@ -17,7 +18,7 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { Colors, Sp } from './src/theme';
 
 function TopBar() {
-  const { bleStatus, batteryPct, isRecording, elapsed, activeAthleteId, athleteProfiles } = useStore();
+  const { bleStatus, batteryPct, isRecording, elapsed, activeAthleteId, athleteProfiles, wheelSensorStatus } = useStore();
 
   const bleColor =
     bleStatus === 'connected'                                    ? Colors.teal  :
@@ -44,6 +45,9 @@ function TopBar() {
         )}
       </View>
       <View style={topStyles.right}>
+        {wheelSensorStatus === 'connected' && (
+          <View style={[topStyles.dot, { backgroundColor: Colors.blue }]} />
+        )}
         {isRecording && (
           <View style={topStyles.recPill}>
             <View style={topStyles.recDot} />
@@ -63,12 +67,14 @@ export default function App() {
   const { loadCalib, loadAthleteProfiles, loadPreviousSessions, loadPairedDeviceId } = useStore();
 
   useBLE();
+  useWheelSensor();
 
   useEffect(() => {
     loadCalib();
     loadAthleteProfiles();
     loadPreviousSessions();
     loadPairedDeviceId();
+    useStore.getState().loadCrrHistory();
   }, []);
 
   return (

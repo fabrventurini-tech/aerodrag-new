@@ -12,13 +12,21 @@
  *   - Il filtro MAC impedisce connessioni a device non accoppiati
  *   - I dati BLE sono cifrati a livello link (BLE 4.2+ con bonding)
  *   - Il device ESP32 accetta connessioni solo dal MAC dell'app accoppiata
+ *
+ * Wheel sensor (sensore ruota Crr):
+ *   - Pairing NON esclusivo: il sensore ruota usa BLE aperto senza bonding
+ *   - Qualsiasi app compatibile (Wahoo, Garmin, Strava) può leggere il profilo CSC standard
+ *   - L'app AeroDrag salva un "sensore preferito" per riconnettersi automaticamente
+ *   - Ma non blocca altri device dal leggere il sensore
+ *   - Il sensore può essere accoppiato a più app contemporaneamente
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const KEY_PAIRED_DEVICE   = 'aerodrag:paired_device_id';
-const KEY_PAIRED_NAME     = 'aerodrag:paired_device_name';
+const KEY_PAIRED_DEVICE    = 'aerodrag:paired_device_id';
+const KEY_PAIRED_NAME      = 'aerodrag:paired_device_name';
 const KEY_SENSOR_WHITELIST = 'aerodrag:sensor_whitelist';
+const KEY_WHEEL_SENSOR     = 'aerodrag:wheel_sensor';
 
 export interface PairedDevice {
   id:   string;   // MAC address BLE del device AeroDrag
@@ -83,6 +91,42 @@ export async function removeSensorFromWhitelist(id: string): Promise<void> {
 
 export async function clearSensorWhitelist(): Promise<void> {
   await AsyncStorage.removeItem(KEY_SENSOR_WHITELIST);
+}
+
+// ── Wheel sensor (sensore ruota Crr) — pairing non esclusivo ─────────────────
+//
+// Design pairing non esclusivo:
+//   - Nessun BLE bonding → il sensore accetta connessioni da chiunque
+//   - L'app salva solo il MAC "preferito" per il riconoscimento automatico
+//   - Durante lo scan, l'app accetta QUALSIASI sensore con servizio BB00
+//     (ma mostra prima quello preferito se visibile)
+//   - Nessun filtro di sicurezza MAC → un atleta può avere il sensore
+//     letto da più device (coach + telefono personale) simultaneamente
+//   - Il sensore espone anche il profilo CSC standard (0x1816) → Wahoo,
+//     Garmin, Strava lo leggono come un normale sensore velocità
+
+export interface WheelSensorDevice {
+  id:        string;   // MAC address BLE del sensore ruota
+  name:      string;   // nome human-readable (es. "AeroDrag Wheel #01")
+  pairedAt:  number;   // timestamp Unix
+  firmware?: string;
+}
+
+export async function savePreferredWheelSensor(device: WheelSensorDevice): Promise<void> {
+  await AsyncStorage.setItem(KEY_WHEEL_SENSOR, JSON.stringify(device));
+}
+
+export async function loadPreferredWheelSensor(): Promise<WheelSensorDevice | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEY_WHEEL_SENSOR);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function removePreferredWheelSensor(): Promise<void> {
+  await AsyncStorage.removeItem(KEY_WHEEL_SENSOR);
 }
 
 // ── Validazione QR code device ────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SensorInput, PhysicsOutput, computePhysics } from '../physics/engine';
 import { loadPairedDevice } from '../security/pairing';
+import { WheelSample, CrrRunResult, CrrCalibResult, fitCrrFromRun, combineIndoorRuns, combineOutdoorRuns, surfaceLabelFromCrr } from '../physics/crr';
 
 // ── Tipi ──────────────────────────────────────────────────────────────────────
 
@@ -31,10 +32,46 @@ export interface AthleteProfile {
 }
 
 export interface CalibrationParams {
-  massRiderKg: number;
-  massBikeKg:  number;
-  crr:         number;
-  pitotOffset: number;
+  massRiderKg:   number;
+  massBikeKg:    number;
+  crr:           number;
+  pitotOffset:   number;
+  tireCircM:     number;  // circonferenza pneumatico [m] (default 2.105 per 700c×25)
+}
+
+// ── Crr calibrazione state ────────────────────────────────────────────────────
+
+export type CrrCalibMode =
+  | 'idle'
+  | 'setup'
+  | 'spinup'
+  | 'coast_indoor'    // coast-down indoor (run 1/2/3)
+  | 'coast_outdoor_a' // run direzione A
+  | 'coast_outdoor_b' // run direzione B
+  | 'computing'
+  | 'done'
+  | 'error';
+
+export interface CrrCalibState {
+  mode:          CrrCalibMode;
+  protocol:      'indoor' | 'outdoor';
+  currentRun:    number;          // 1-3
+  totalRuns:     number;          // 3 per indoor, 6 per outdoor (3A+3B)
+  indoorRuns:    CrrRunResult[];
+  outdoorRunsA:  CrrRunResult[];
+  outdoorRunsB:  CrrRunResult[];
+  activeSamples: WheelSample[];   // campioni del run in corso
+  result:        CrrCalibResult | null;
+  history:       CrrCalibResult[];
+}
+
+// ── Wheel sensor state ────────────────────────────────────────────────────────
+
+export interface WheelStream {
+  speedMs:  number;
+  accelMs2: number;
+  tempC:    number;
+  vibRMS:   number;
 }
 
 // ── Stato default ─────────────────────────────────────────────────────────────
@@ -44,6 +81,20 @@ const DEFAULT_CALIB: CalibrationParams = {
   massBikeKg:  8,
   crr:         0.004,
   pitotOffset: 0,
+  tireCircM:   2.105,
+};
+
+const DEFAULT_CRR_CALIB: CrrCalibState = {
+  mode:         'idle',
+  protocol:     'indoor',
+  currentRun:   1,
+  totalRuns:    3,
+  indoorRuns:   [],
+  outdoorRunsA: [],
+  outdoorRunsB: [],
+  activeSamples: [],
+  result:       null,
+  history:      [],
 };
 
 const EMPTY_SENSOR: SensorInput = {
@@ -60,11 +111,19 @@ const EMPTY_PHYSICS: PhysicsOutput = {
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 interface AeroDragStore {
-  // Stato BLE
+  // Stato BLE (device principale AeroDrag)
   bleStatus:  'idle' | 'scanning' | 'connecting' | 'connected' | 'error';
   batteryPct: number;
   isSimMode:  boolean;
   pairedDeviceId: string | null;
+
+  // Stato BLE sensore ruota
+  wheelSensorStatus: 'idle' | 'scanning' | 'connecting' | 'connected' | 'error';
+  wheelSensorId:     string | null;
+  wheelStream:       WheelStream;
+
+  // Calibrazione Crr
+  crrCalib: CrrCalibState;
 
   // Dati live
   sensor:  SensorInput;
@@ -87,11 +146,27 @@ interface AeroDragStore {
   athleteProfiles: AthleteProfile[];
   activeAthleteId: string | null;
 
-  // Actions BLE
+  // Actions BLE device principale
   setBleStatus:     (s: AeroDragStore['bleStatus']) => void;
   setBattery:       (pct: number) => void;
   setSimMode:       (v: boolean) => void;
   setPairedDevice:  (id: string | null) => void;
+
+  // Actions BLE sensore ruota
+  setWheelSensorStatus: (s: AeroDragStore['wheelSensorStatus']) => void;
+  setWheelSensorId:     (id: string | null) => void;
+  updateWheelStream:    (s: WheelStream) => void;
+  onCrrRunComplete:     (result: { crr: number; quality: number; runIndex: number }) => void;
+
+  // Actions calibrazione Crr
+  startCrrCalib:    (protocol: 'indoor' | 'outdoor') => void;
+  readyForSpinup:   () => void;
+  startCrrRun:      () => void;
+  addCrrSample:     (s: WheelSample) => void;
+  finalizeCrrRun:   () => void;
+  applyCrrResult:   () => void;
+  resetCrrCalib:    () => void;
+  loadCrrHistory:   () => Promise<void>;
 
   // Actions dati
   updateSensors: (partial: Partial<SensorInput>) => void;
@@ -125,6 +200,10 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   batteryPct:      0,
   isSimMode:       false,
   pairedDeviceId:  null,
+  wheelSensorStatus: 'idle',
+  wheelSensorId:     null,
+  wheelStream:       { speedMs: 0, accelMs2: 0, tempC: 20, vibRMS: 0 },
+  crrCalib:          DEFAULT_CRR_CALIB,
   sensor:          EMPTY_SENSOR,
   physics:         EMPTY_PHYSICS,
   history:         [],
@@ -139,11 +218,149 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   athleteProfiles: [],
   activeAthleteId: null,
 
-  // ── BLE ────────────────────────────────────────────────────────────────────
+  // ── BLE device principale ──────────────────────────────────────────────────
   setBleStatus:    (s) => set({ bleStatus: s }),
   setBattery:      (pct) => set({ batteryPct: pct }),
   setSimMode:      (v) => set({ isSimMode: v }),
   setPairedDevice: (id) => set({ pairedDeviceId: id }),
+
+  // ── BLE sensore ruota ──────────────────────────────────────────────────────
+  setWheelSensorStatus: (s) => set({ wheelSensorStatus: s }),
+  setWheelSensorId:     (id) => set({ wheelSensorId: id }),
+  updateWheelStream:    (s) => {
+    set({ wheelStream: s });
+    // Accumula campioni se è in corso un run di calibrazione
+    const { crrCalib } = get();
+    const recording = ['coast_indoor', 'coast_outdoor_a', 'coast_outdoor_b'].includes(crrCalib.mode);
+    if (recording) {
+      const sample: WheelSample = { t: Date.now(), ...s };
+      set((st) => ({
+        crrCalib: {
+          ...st.crrCalib,
+          activeSamples: [...st.crrCalib.activeSamples, sample],
+        },
+      }));
+    }
+  },
+
+  onCrrRunComplete: ({ crr, quality, runIndex }) => {
+    // Riceve il risultato parziale dal firmware (opzionale, l'app calcola comunque)
+    // Solo per aggiornamento UI rapido
+  },
+
+  // ── Calibrazione Crr ───────────────────────────────────────────────────────
+  startCrrCalib: (protocol) => {
+    set({
+      crrCalib: {
+        ...DEFAULT_CRR_CALIB,
+        protocol,
+        totalRuns:  protocol === 'indoor' ? 3 : 6,
+        history:    get().crrCalib.history,
+        mode:       'setup',
+      },
+    });
+  },
+
+  readyForSpinup: () => {
+    set((st) => ({ crrCalib: { ...st.crrCalib, mode: 'spinup' } }));
+  },
+
+  startCrrRun: () => {
+    const { crrCalib } = get();
+    const mode: CrrCalibMode = crrCalib.protocol === 'indoor'
+      ? 'coast_indoor'
+      : crrCalib.currentRun <= 3
+        ? 'coast_outdoor_a'
+        : 'coast_outdoor_b';
+    set((st) => ({
+      crrCalib: { ...st.crrCalib, mode, activeSamples: [] },
+    }));
+  },
+
+  addCrrSample: (s) => {
+    set((st) => ({
+      crrCalib: {
+        ...st.crrCalib,
+        activeSamples: [...st.crrCalib.activeSamples, s],
+      },
+    }));
+  },
+
+  finalizeCrrRun: () => {
+    const { crrCalib, calib, physics } = get();
+    const params = {
+      massKg:     calib.massRiderKg + calib.massBikeKg,
+      rhoKgM3:    physics.rhoKgM3 || 1.225,
+      cdaM2:      physics.cda || 0,
+      slopeDeg:   0,
+      minSpeedMs: 2.0,
+    };
+
+    const runResult = fitCrrFromRun(crrCalib.activeSamples, params);
+    let nextState: Partial<CrrCalibState>;
+
+    if (crrCalib.protocol === 'indoor') {
+      const newRuns = [...crrCalib.indoorRuns, runResult];
+      const done = newRuns.length >= 3;
+      nextState = {
+        indoorRuns: newRuns,
+        currentRun: crrCalib.currentRun + 1,
+        activeSamples: [],
+        mode: done ? 'computing' : 'spinup',
+      };
+      if (done) {
+        const result = combineIndoorRuns(newRuns);
+        result.surfaceLabel = surfaceLabelFromCrr(result.crr);
+        nextState = { ...nextState, result, mode: 'done' };
+      }
+    } else {
+      const isA = crrCalib.currentRun <= 3;
+      const newA = isA ? [...crrCalib.outdoorRunsA, runResult] : crrCalib.outdoorRunsA;
+      const newB = isA ? crrCalib.outdoorRunsB : [...crrCalib.outdoorRunsB, runResult];
+      const done = newA.length >= 3 && newB.length >= 3;
+      nextState = {
+        outdoorRunsA: newA,
+        outdoorRunsB: newB,
+        currentRun: crrCalib.currentRun + 1,
+        activeSamples: [],
+        mode: done ? 'computing' : 'spinup',
+      };
+      if (done) {
+        const result = combineOutdoorRuns(newA, newB);
+        result.surfaceLabel = surfaceLabelFromCrr(result.crr);
+        nextState = { ...nextState, result, mode: 'done' };
+      }
+    }
+
+    set((st) => ({ crrCalib: { ...st.crrCalib, ...nextState } }));
+  },
+
+  applyCrrResult: () => {
+    const { crrCalib } = get();
+    if (!crrCalib.result) return;
+    const newHistory = [crrCalib.result, ...crrCalib.history].slice(0, 20);
+    get().setCalib({ crr: crrCalib.result.crr });
+    set((st) => ({
+      crrCalib: { ...st.crrCalib, history: newHistory },
+    }));
+    AsyncStorage.setItem('aerodrag:crr_history', JSON.stringify(newHistory)).catch(() => {});
+  },
+
+  resetCrrCalib: () => {
+    set((st) => ({
+      crrCalib: { ...DEFAULT_CRR_CALIB, history: st.crrCalib.history },
+    }));
+  },
+
+  loadCrrHistory: async () => {
+    try {
+      const raw = await AsyncStorage.getItem('aerodrag:crr_history');
+      if (raw) {
+        const history = JSON.parse(raw) as CrrCalibResult[];
+        set((st) => ({ crrCalib: { ...st.crrCalib, history } }));
+      }
+    } catch {}
+  },
 
   // ── Dati ───────────────────────────────────────────────────────────────────
   updateSensors: (partial) => {
@@ -305,3 +522,6 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     if (d) set({ pairedDeviceId: d.id });
   },
 }));
+
+// Re-export Crr types for convenience
+export type { WheelSample, CrrRunResult, CrrCalibResult, CrrCalibMode };
