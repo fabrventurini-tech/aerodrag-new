@@ -193,6 +193,70 @@ export async function removePreferredWheelSensor(): Promise<void> {
   if (active) await removeWheelSensor(active.id);
 }
 
+// ── Cadence sensor — pairing non esclusivo ────────────────────────────────────
+//
+// Compatibile con qualsiasi sensore BLE CSC (0x1816) che supporti Crank
+// Revolution Data (bit1 di CSC Feature): Wahoo RPM Cadence, Garmin Cadence,
+// 4iiii, Polar, Stages, nonché il sensore AeroDrag Cadence proprietario.
+// Lo stesso meccanismo del wheel sensor: lista + active ID.
+
+const KEY_CADENCE_SENSORS   = 'aerodrag:cadence_sensors';
+const KEY_CADENCE_ACTIVE_ID = 'aerodrag:cadence_active_id';
+
+export interface CadenceSensorDevice {
+  id:        string;
+  name:      string;
+  pairedAt:  number;
+  firmware?: string;
+  bikeLabel?: string;
+}
+
+export async function loadCadenceSensorList(): Promise<CadenceSensorDevice[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEY_CADENCE_SENSORS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveCadenceSensor(device: CadenceSensorDevice): Promise<void> {
+  const list = await loadCadenceSensorList();
+  const idx  = list.findIndex((s) => s.id === device.id);
+  const next = idx >= 0
+    ? list.map((s) => (s.id === device.id ? device : s))
+    : [...list, device];
+  await AsyncStorage.setItem(KEY_CADENCE_SENSORS, JSON.stringify(next));
+}
+
+export async function removeCadenceSensor(id: string): Promise<void> {
+  const list = await loadCadenceSensorList();
+  const next = list.filter((s) => s.id !== id);
+  await AsyncStorage.setItem(KEY_CADENCE_SENSORS, JSON.stringify(next));
+  const activeId = await loadActiveCadenceSensorId();
+  if (activeId === id) await AsyncStorage.removeItem(KEY_CADENCE_ACTIVE_ID);
+}
+
+export async function loadActiveCadenceSensorId(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(KEY_CADENCE_ACTIVE_ID);
+  } catch {
+    return null;
+  }
+}
+
+export async function setActiveCadenceSensorId(id: string | null): Promise<void> {
+  if (id) await AsyncStorage.setItem(KEY_CADENCE_ACTIVE_ID, id);
+  else    await AsyncStorage.removeItem(KEY_CADENCE_ACTIVE_ID);
+}
+
+export async function loadPreferredCadenceSensor(): Promise<CadenceSensorDevice | null> {
+  const list     = await loadCadenceSensorList();
+  if (list.length === 0) return null;
+  const activeId = await loadActiveCadenceSensorId();
+  return list.find((s) => s.id === activeId) ?? list[0];
+}
+
 // ── Validazione QR code device ────────────────────────────────────────────────
 // Il QR contiene: "aerodrag://pair?id=XX:XX:XX:XX:XX:XX&name=AeroDrag%20001"
 

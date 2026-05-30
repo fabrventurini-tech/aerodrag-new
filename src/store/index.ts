@@ -122,6 +122,10 @@ interface AeroDragStore {
   wheelSensorId:     string | null;
   wheelStream:       WheelStream;
 
+  // Stato BLE sensore cadenza
+  cadenceSensorStatus: 'idle' | 'scanning' | 'connecting' | 'connected' | 'error';
+  cadenceSensorId:     string | null;
+
   // Calibrazione Crr
   crrCalib: CrrCalibState;
 
@@ -166,6 +170,10 @@ interface AeroDragStore {
   updateWheelStream:    (s: WheelStream) => void;
   onCrrRunComplete:     (result: { crr: number; quality: number; runIndex: number }) => void;
 
+  // Actions BLE sensore cadenza
+  setCadenceSensorStatus: (s: AeroDragStore['cadenceSensorStatus']) => void;
+  setCadenceSensorId:     (id: string | null) => void;
+
   // Actions calibrazione Crr
   startCrrCalib:    (protocol: 'indoor' | 'outdoor') => void;
   readyForSpinup:   () => void;
@@ -208,9 +216,11 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   batteryPct:      0,
   isSimMode:       false,
   pairedDeviceId:  null,
-  wheelSensorStatus: 'idle',
-  wheelSensorId:     null,
-  wheelStream:       { speedMs: 0, accelMs2: 0, tempC: 20, vibRMS: 0 },
+  wheelSensorStatus:   'idle',
+  wheelSensorId:       null,
+  wheelStream:         { speedMs: 0, accelMs2: 0, tempC: 20, vibRMS: 0 },
+  cadenceSensorStatus: 'idle',
+  cadenceSensorId:     null,
   crrCalib:          DEFAULT_CRR_CALIB,
   crrSource:         'default',
   crrActive:         DEFAULT_CALIB.crr,
@@ -237,6 +247,10 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   // ── BLE sensore ruota ──────────────────────────────────────────────────────
   setWheelSensorStatus: (s) => set({ wheelSensorStatus: s }),
   setWheelSensorId:     (id) => set({ wheelSensorId: id }),
+
+  // ── BLE sensore cadenza ────────────────────────────────────────────────────
+  setCadenceSensorStatus: (s) => set({ cadenceSensorStatus: s }),
+  setCadenceSensorId:     (id) => set({ cadenceSensorId: id }),
   updateWheelStream:    (s) => {
     set({ wheelStream: s });
     // Accumula campioni se è in corso un run di calibrazione

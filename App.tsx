@@ -6,6 +6,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { useBLE } from './src/hooks/useBLE';
 import { useWheelSensor } from './src/hooks/useWheelSensor';
+import { useCadenceSensor } from './src/hooks/useCadenceSensor';
 import { useStore } from './src/store';
 import { NavBar, Screen } from './src/components';
 
@@ -18,7 +19,11 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { Colors, Sp } from './src/theme';
 
 function TopBar() {
-  const { bleStatus, batteryPct, isRecording, elapsed, activeAthleteId, athleteProfiles, wheelSensorStatus } = useStore();
+  const {
+    bleStatus, batteryPct, isRecording, elapsed,
+    activeAthleteId, athleteProfiles,
+    wheelSensorStatus, cadenceSensorStatus,
+  } = useStore();
 
   const bleColor =
     bleStatus === 'connected'                                    ? Colors.teal  :
@@ -48,6 +53,9 @@ function TopBar() {
         {wheelSensorStatus === 'connected' && (
           <View style={[topStyles.dot, { backgroundColor: Colors.blue }]} />
         )}
+        {cadenceSensorStatus === 'connected' && (
+          <View style={[topStyles.dot, { backgroundColor: Colors.amber }]} />
+        )}
         {isRecording && (
           <View style={topStyles.recPill}>
             <View style={topStyles.recDot} />
@@ -68,6 +76,7 @@ export default function App() {
 
   useBLE();
   useWheelSensor();
+  useCadenceSensor();
 
   useEffect(() => {
     loadCalib();
