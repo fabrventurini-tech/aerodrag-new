@@ -14,19 +14,10 @@ function fmt(n: number, decimals = 2): string {
 }
 
 function fmtTime(s: number): string {
-  const h   = Math.floor(s / 3600);
-  const m   = Math.floor((s % 3600) / 60);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-}
-
-/** Qualità asfalto/superficie da indice vibrazione (0–255) */
-function vibQuality(idx: number): { label: string; color: string } {
-  if (idx === 0)   return { label: '–',         color: Colors.muted };
-  if (idx < 80)    return { label: 'Liscia',     color: Colors.teal };
-  if (idx < 150)   return { label: 'Normale',    color: Colors.blue };
-  if (idx < 200)   return { label: 'Irregolare', color: Colors.amber };
-  return             { label: 'Dissestata',    color: Colors.red };
 }
 
 export function LiveScreen() {
@@ -34,14 +25,11 @@ export function LiveScreen() {
     physics, sensor, history, isRecording, elapsed,
     currentLap, startSession, stopSession, addLap,
     isSimMode, setSimMode,
-    pairedWheelId, pairedHRId, pairedHRType,
-    wheelData, hrRMSSD,
   } = useStore();
 
-  const cdaHistory    = history.slice(-60).map(p => p.physics.cda);
-  const powerHistory  = history.slice(-60).map(p => p.sensor.powerW);
+  const cdaHistory    = history.slice(-60).map((p) => p.physics.cda);
+  const powerHistory  = history.slice(-60).map((p) => p.sensor.powerW);
   const speedKmh      = sensor.speedMs * 3.6;
-  const vibInfo       = vibQuality(wheelData.vibrationIndex);
 
   const handleRec = useCallback(() => {
     if (isRecording) stopSession();
@@ -53,10 +41,6 @@ export function LiveScreen() {
     addLap();
     Vibration.vibrate([0, 30, 50, 30]);
   }, [addLap]);
-
-  const hasWheel  = !!pairedWheelId;
-  const hasHRBand = !!pairedHRId;
-  const hasIMU    = hasHRBand && pairedHRType === 'aerodrag';
 
   return (
     <ScrollView
@@ -76,7 +60,7 @@ export function LiveScreen() {
         )}
       </View>
 
-      {/* ── Metriche riga 1: potenza + velocità ── */}
+      {/* ── Metriche riga 1 ── */}
       <View style={styles.row}>
         <MetricCard
           label="Potenza"
@@ -92,7 +76,7 @@ export function LiveScreen() {
         />
       </View>
 
-      {/* ── Metriche riga 2: HR + cadenza ── */}
+      {/* ── Metriche riga 2 ── */}
       <View style={styles.row}>
         <MetricCard
           label="HR"
@@ -108,63 +92,7 @@ export function LiveScreen() {
         />
       </View>
 
-      {/* ── HRV se fascia HR attiva ── */}
-      {hasHRBand && (
-        <View style={styles.row}>
-          <MetricCard
-            label="RMSSD"
-            value={hrRMSSD > 0 ? fmt(hrRMSSD, 0) : '–'}
-            unit="ms"
-            color={Colors.red}
-          />
-          {hasIMU && (
-            <MetricCard
-              label="Resp."
-              value={sensor.respBreathMin > 0 ? fmt(sensor.respBreathMin, 0) : '–'}
-              unit="b/m"
-              color={Colors.muted}
-            />
-          )}
-        </View>
-      )}
-
-      {/* ── Biomeccanica tronco (solo fascia AeroDrag) ── */}
-      {hasIMU && (
-        <View style={styles.bioCard}>
-          <Text style={styles.bioTitle}>Biomeccanica tronco</Text>
-          <View style={styles.bioRow}>
-            <View style={styles.bioItem}>
-              <Text style={styles.bioLabel}>Angolo tronco</Text>
-              <Text style={[styles.bioValue, { color: Colors.blue }]}>
-                {sensor.trunkPitchDeg !== 0 ? `${fmt(sensor.trunkPitchDeg, 1)}°` : '–'}
-              </Text>
-            </View>
-            <View style={styles.bioItem}>
-              <Text style={styles.bioLabel}>Oscillazione</Text>
-              <Text style={[styles.bioValue, { color: Colors.amber }]}>
-                {sensor.lateralOscMm > 0 ? `${fmt(sensor.lateralOscMm, 0)} mm` : '–'}
-              </Text>
-            </View>
-            <View style={styles.bioItem}>
-              <Text style={styles.bioLabel}>Temp. cute</Text>
-              <Text style={[styles.bioValue, { color: Colors.muted }]}>
-                {sensor.skinTempC > 0 ? `${fmt(sensor.skinTempC, 1)}°C` : '–'}
-              </Text>
-            </View>
-          </View>
-        </View>
-      )}
-
-      {/* ── Qualità superficie (sensore ruota) ── */}
-      {hasWheel && wheelData.vibrationIndex > 0 && (
-        <View style={styles.surfaceCard}>
-          <Text style={styles.surfaceLabel}>Superficie</Text>
-          <Text style={[styles.surfaceValue, { color: vibInfo.color }]}>{vibInfo.label}</Text>
-          <Text style={styles.surfaceIdx}>IDX {wheelData.vibrationIndex}</Text>
-        </View>
-      )}
-
-      {/* ── Metriche aria ── */}
+      {/* ── Metriche riga 3 ── */}
       <View style={styles.row}>
         <MetricCard
           label="v aria"
@@ -192,11 +120,15 @@ export function LiveScreen() {
           </View>
           <View style={styles.breakdownRow}>
             <Text style={styles.breakdownLabel}>Rolling</Text>
-            <Text style={styles.breakdownValue}>{fmt(physics.pRollingW, 0)} W</Text>
+            <Text style={styles.breakdownValue}>
+              {fmt(physics.pRollingW, 0)} W
+            </Text>
           </View>
           <View style={styles.breakdownRow}>
             <Text style={styles.breakdownLabel}>Gravità</Text>
-            <Text style={styles.breakdownValue}>{fmt(physics.pGravityW, 0)} W</Text>
+            <Text style={styles.breakdownValue}>
+              {fmt(physics.pGravityW, 0)} W
+            </Text>
           </View>
         </View>
       )}
@@ -220,14 +152,16 @@ export function LiveScreen() {
       <View style={styles.buttonRow}>
         <TouchableOpacity
           style={[styles.recBtn, {
-            borderColor:     isRecording ? Colors.red   : Colors.teal,
+            borderColor:     isRecording ? Colors.red  : Colors.teal,
             backgroundColor: isRecording ? Colors.redBg : Colors.tealBg,
             flex: 2,
           }]}
           onPress={handleRec}
           activeOpacity={0.75}
         >
-          <Text style={[styles.recText, { color: isRecording ? Colors.red : Colors.teal }]}>
+          <Text style={[styles.recText, {
+            color: isRecording ? Colors.red : Colors.teal,
+          }]}>
             {isRecording ? '⏹ STOP' : '⏺ REC'}
           </Text>
         </TouchableOpacity>
@@ -235,7 +169,9 @@ export function LiveScreen() {
         {isRecording && (
           <TouchableOpacity
             style={[styles.recBtn, {
-              borderColor: Colors.amber, backgroundColor: Colors.amberBg, flex: 1,
+              borderColor:     Colors.amber,
+              backgroundColor: Colors.amberBg,
+              flex: 1,
             }]}
             onPress={handleLap}
             activeOpacity={0.75}
@@ -251,7 +187,7 @@ export function LiveScreen() {
         onPress={() => setSimMode(!isSimMode)}
       >
         <Text style={styles.simText}>
-          {isSimMode ? '🔴 Simulazione attiva (tutti i device)' : '⚫ Modalità simulazione'}
+          {isSimMode ? '🔴 Simulazione attiva' : '⚫ Modalità simulazione'}
         </Text>
       </TouchableOpacity>
     </ScrollView>
@@ -277,38 +213,6 @@ const styles = StyleSheet.create({
 
   row: { flexDirection: 'row', gap: Sp.sm },
 
-  // ── Biomeccanica tronco ──────────────────────────────────────────────────
-  bioCard: {
-    backgroundColor: Colors.s1,
-    borderRadius:    Radius.md,
-    borderWidth:     0.5,
-    borderColor:     Colors.blue + '40',
-    padding:         Sp.md,
-    gap:             Sp.sm,
-  },
-  bioTitle: {
-    fontSize: 11, color: Colors.muted, textTransform: 'uppercase', letterSpacing: 0.6,
-  },
-  bioRow:  { flexDirection: 'row', justifyContent: 'space-between' },
-  bioItem: { alignItems: 'center', flex: 1 },
-  bioLabel:{ fontSize: 10, color: Colors.muted, marginBottom: 2 },
-  bioValue:{ fontSize: 18, fontWeight: '700', fontVariant: ['tabular-nums'] },
-
-  // ── Superficie ───────────────────────────────────────────────────────────
-  surfaceCard: {
-    backgroundColor: Colors.s1,
-    borderRadius:    Radius.md,
-    borderWidth:     0.5,
-    borderColor:     Colors.border,
-    padding:         Sp.md,
-    flexDirection:   'row',
-    alignItems:      'center',
-    justifyContent:  'space-between',
-  },
-  surfaceLabel: { fontSize: 12, color: Colors.muted, textTransform: 'uppercase', letterSpacing: 0.6 },
-  surfaceValue: { fontSize: 16, fontWeight: '700' },
-  surfaceIdx:   { fontSize: 11, color: Colors.muted },
-
   breakdown: {
     backgroundColor: Colors.s1,
     borderRadius:    Radius.md,
@@ -332,15 +236,18 @@ const styles = StyleSheet.create({
   },
   chartLabel: { fontSize: 11, color: Colors.muted },
 
-  lapInfo:  { alignItems: 'center', paddingVertical: Sp.xs },
-  lapText:  { fontSize: 13, color: Colors.amber, fontVariant: ['tabular-nums'] },
+  lapInfo: {
+    alignItems: 'center',
+    paddingVertical: Sp.xs,
+  },
+  lapText: { fontSize: 13, color: Colors.amber, fontVariant: ['tabular-nums'] },
 
   buttonRow: { flexDirection: 'row', gap: Sp.sm },
   recBtn: {
-    borderRadius:    Radius.md,
-    borderWidth:     1,
+    borderRadius:  Radius.md,
+    borderWidth:   1,
     paddingVertical: Sp.md,
-    alignItems:      'center',
+    alignItems:    'center',
   },
   recText: { fontSize: 16, fontWeight: '700', letterSpacing: 1 },
 

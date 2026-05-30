@@ -19,12 +19,6 @@ export interface SensorInput {
   speedMs:    number;   // velocità ruota [m/s]
   cadenceRpm: number;   // cadenza [rpm]
   hrBpm:      number;   // frequenza cardiaca [bpm]
-  // ── Fascia HR+IMU (biomeccanica tronco) ──────────────────────────────────
-  trunkPitchDeg:  number;   // angolo tronco longitudinale [°]
-  trunkRollDeg:   number;   // angolo tronco laterale [°]
-  lateralOscMm:   number;   // oscillazione laterale [mm]
-  respBreathMin:  number;   // frequenza respiratoria [breath/min]
-  skinTempC:      number;   // temperatura cutanea [°C]
 }
 
 export interface PhysicsOutput {
