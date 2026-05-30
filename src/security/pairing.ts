@@ -1,46 +1,43 @@
 /**
  * pairing.ts
- * Gestione pairing sicuro tra app e device AeroDrag.
+ * Gestione pairing multi-device: device principale AeroDrag, sensore ruota, fascia HR.
  *
- * Meccanismo:
- *   1. L'utente scansiona il QR sul device (contiene deviceId + challenge)
- *   2. L'app salva il deviceId in AsyncStorage
- *   3. useBLE si connette SOLO al deviceId salvato (whitelist MAC)
- *   4. BLE bonding garantisce che i dati siano cifrati AES-CCM
- *
- * Anti-sniffing:
- *   - Il filtro MAC impedisce connessioni a device non accoppiati
- *   - I dati BLE sono cifrati a livello link (BLE 4.2+ con bonding)
- *   - Il device ESP32 accetta connessioni solo dal MAC dell'app accoppiata
+ * Ogni device ha il proprio slot di storage separato.
+ * La fascia HR può essere un device AeroDrag proprietario oppure qualsiasi
+ * monitor cardiaco con BLE Heart Rate Service standard (Garmin, Wahoo, Polar…).
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const KEY_PAIRED_DEVICE   = 'aerodrag:paired_device_id';
-const KEY_PAIRED_NAME     = 'aerodrag:paired_device_name';
-const KEY_SENSOR_WHITELIST = 'aerodrag:sensor_whitelist';
+const KEY_PAIRED_MAIN  = 'aerodrag:paired_device_id';
+const KEY_PAIRED_WHEEL = 'aerodrag:paired_wheel_id';
+const KEY_PAIRED_HR    = 'aerodrag:paired_hr_id';
+const KEY_PAIRED_HR_TYPE = 'aerodrag:paired_hr_type';
 
 export interface PairedDevice {
-  id:   string;   // MAC address BLE del device AeroDrag
-  name: string;   // nome human-readable (es. "AeroDrag #001")
-  pairedAt: number; // timestamp Unix
+  id:       string;    // MAC address BLE
+  name:     string;    // nome human-readable
+  pairedAt: number;    // timestamp Unix ms
 }
 
+/** Tipo di device HR: fascia AeroDrag con IMU oppure monitor standard di terze parti */
+export type HRDeviceType = 'aerodrag' | 'standard';
+
 export interface SensorEntry {
-  id:   string;   // MAC address sensore BLE (power meter, CSC, HR)
-  name: string;   // nome sensore
+  id:   string;
+  name: string;
   type: 'power' | 'csc' | 'hr';
 }
 
 // ── Device AeroDrag principale ────────────────────────────────────────────────
 
 export async function savePairedDevice(device: PairedDevice): Promise<void> {
-  await AsyncStorage.setItem(KEY_PAIRED_DEVICE, JSON.stringify(device));
+  await AsyncStorage.setItem(KEY_PAIRED_MAIN, JSON.stringify(device));
 }
 
 export async function loadPairedDevice(): Promise<PairedDevice | null> {
   try {
-    const raw = await AsyncStorage.getItem(KEY_PAIRED_DEVICE);
+    const raw = await AsyncStorage.getItem(KEY_PAIRED_MAIN);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -48,11 +45,77 @@ export async function loadPairedDevice(): Promise<PairedDevice | null> {
 }
 
 export async function unpairDevice(): Promise<void> {
-  await AsyncStorage.multiRemove([KEY_PAIRED_DEVICE, KEY_PAIRED_NAME]);
+  await AsyncStorage.removeItem(KEY_PAIRED_MAIN);
 }
 
-// ── Whitelist sensori BLE (power meter, CSC, HR) ──────────────────────────────
-// Impedisce che il device si agganci ai sensori di un atleta vicino.
+// ── Sensore IMU mozzo (AeroDrag-Wheel) ───────────────────────────────────────
+
+export async function savePairedWheel(device: PairedDevice): Promise<void> {
+  await AsyncStorage.setItem(KEY_PAIRED_WHEEL, JSON.stringify(device));
+}
+
+export async function loadPairedWheel(): Promise<PairedDevice | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEY_PAIRED_WHEEL);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function unpairWheel(): Promise<void> {
+  await AsyncStorage.removeItem(KEY_PAIRED_WHEEL);
+}
+
+// ── Fascia HR+IMU o monitor HR standard ──────────────────────────────────────
+
+export async function savePairedHR(device: PairedDevice, hrType: HRDeviceType): Promise<void> {
+  await AsyncStorage.multiSet([
+    [KEY_PAIRED_HR,      JSON.stringify(device)],
+    [KEY_PAIRED_HR_TYPE, hrType],
+  ]);
+}
+
+export async function loadPairedHR(): Promise<{ device: PairedDevice; hrType: HRDeviceType } | null> {
+  try {
+    const [[, rawDevice], [, rawType]] = await AsyncStorage.multiGet([
+      KEY_PAIRED_HR, KEY_PAIRED_HR_TYPE,
+    ]);
+    if (!rawDevice) return null;
+    const device: PairedDevice = JSON.parse(rawDevice);
+    const hrType: HRDeviceType = (rawType as HRDeviceType) ?? 'standard';
+    return { device, hrType };
+  } catch {
+    return null;
+  }
+}
+
+export async function unpairHR(): Promise<void> {
+  await AsyncStorage.multiRemove([KEY_PAIRED_HR, KEY_PAIRED_HR_TYPE]);
+}
+
+// ── Validazione QR code device principale ────────────────────────────────────
+// Formato: "aerodrag://pair?id=XX:XX:XX:XX:XX:XX&name=AeroDrag%20001"
+
+export function parseDeviceQR(qrData: string): PairedDevice | null {
+  try {
+    const url  = new URL(qrData);
+    const id   = url.searchParams.get('id');
+    const name = url.searchParams.get('name') ?? 'AeroDrag';
+    if (!id || !isValidMAC(id)) return null;
+    return { id, name, pairedAt: Date.now() };
+  } catch {
+    return null;
+  }
+}
+
+function isValidMAC(mac: string): boolean {
+  return /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(mac);
+}
+
+// ── Whitelist sensori ANT+ legacy (power meter, CSC) ─────────────────────────
+
+const KEY_SENSOR_WHITELIST = 'aerodrag:sensor_whitelist';
 
 export async function loadSensorWhitelist(): Promise<SensorEntry[]> {
   try {
@@ -64,44 +127,16 @@ export async function loadSensorWhitelist(): Promise<SensorEntry[]> {
 }
 
 export async function addSensorToWhitelist(entry: SensorEntry): Promise<void> {
-  const list = await loadSensorWhitelist();
-  // Sostituisce se esiste già un sensore dello stesso tipo
-  const filtered = list.filter((s) => s.type !== entry.type);
-  await AsyncStorage.setItem(
-    KEY_SENSOR_WHITELIST,
-    JSON.stringify([...filtered, entry])
-  );
+  const list     = await loadSensorWhitelist();
+  const filtered = list.filter(s => s.type !== entry.type);
+  await AsyncStorage.setItem(KEY_SENSOR_WHITELIST, JSON.stringify([...filtered, entry]));
 }
 
 export async function removeSensorFromWhitelist(id: string): Promise<void> {
   const list = await loadSensorWhitelist();
-  await AsyncStorage.setItem(
-    KEY_SENSOR_WHITELIST,
-    JSON.stringify(list.filter((s) => s.id !== id))
-  );
+  await AsyncStorage.setItem(KEY_SENSOR_WHITELIST, JSON.stringify(list.filter(s => s.id !== id)));
 }
 
 export async function clearSensorWhitelist(): Promise<void> {
   await AsyncStorage.removeItem(KEY_SENSOR_WHITELIST);
-}
-
-// ── Validazione QR code device ────────────────────────────────────────────────
-// Il QR contiene: "aerodrag://pair?id=XX:XX:XX:XX:XX:XX&name=AeroDrag%20001"
-
-export function parseDeviceQR(qrData: string): PairedDevice | null {
-  try {
-    const url    = new URL(qrData);
-    const id     = url.searchParams.get('id');
-    const name   = url.searchParams.get('name') ?? 'AeroDrag';
-
-    if (!id || !isValidMAC(id)) return null;
-
-    return { id, name, pairedAt: Date.now() };
-  } catch {
-    return null;
-  }
-}
-
-function isValidMAC(mac: string): boolean {
-  return /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(mac);
 }
