@@ -86,17 +86,30 @@ export async function clearSensorWhitelist(): Promise<void> {
 }
 
 // ── Validazione QR code device ────────────────────────────────────────────────
-// Il QR contiene: "aerodrag://pair?id=XX:XX:XX:XX:XX:XX&name=AeroDrag%20001"
+// Formati supportati:
+//   1. "aerodrag://pair?id=XX:XX:XX:XX:XX:XX&name=AeroDrag%20001"  (app standard)
+//   2. "AERODRAG://PAIR/XX:XX:XX:XX:XX:XX"                         (firmware ESP32)
 
 export function parseDeviceQR(qrData: string): PairedDevice | null {
   try {
-    const url    = new URL(qrData);
-    const id     = url.searchParams.get('id');
-    const name   = url.searchParams.get('name') ?? 'AeroDrag';
+    const normalized = qrData.trim();
 
+    // Formato firmware: AERODRAG://PAIR/<MAC>
+    const firmwareMatch = normalized
+      .toUpperCase()
+      .match(/^AERODRAG:\/\/PAIR\/([0-9A-F]{2}(?::[0-9A-F]{2}){5})$/);
+    if (firmwareMatch) {
+      const id = firmwareMatch[1].toUpperCase();
+      return { id, name: 'AeroDrag', pairedAt: Date.now() };
+    }
+
+    // Formato standard: aerodrag://pair?id=<MAC>&name=<name>
+    const url  = new URL(normalized);
+    const id   = url.searchParams.get('id');
+    const name = url.searchParams.get('name') ?? 'AeroDrag';
     if (!id || !isValidMAC(id)) return null;
 
-    return { id, name, pairedAt: Date.now() };
+    return { id: id.toUpperCase(), name, pairedAt: Date.now() };
   } catch {
     return null;
   }
