@@ -140,8 +140,8 @@ export function combineIndoorRuns(
 
   const crrValues = valid.map((r) => r.crr);
   const crr  = crrValues.reduce((s, x) => s + x, 0) / crrValues.length;
-  const crrMin = Math.min(...crrValues);
-  const crrMax = Math.max(...crrValues);
+  const crrMin = crrValues.reduce((a, b) => Math.min(a, b));
+  const crrMax = crrValues.reduce((a, b) => Math.max(a, b));
   const spread = crrMax - crrMin;
 
   const avgRSq  = valid.reduce((s, r) => s + r.rSquared, 0) / valid.length;
@@ -196,8 +196,8 @@ export function combineOutdoorRuns(
   const crr  = (avgA + avgB) / 2;
 
   const allValid = [...validA, ...validB];
-  const crrMin = Math.min(...allValid.map((r) => r.crr));
-  const crrMax = Math.max(...allValid.map((r) => r.crr));
+  const crrMin = allValid.reduce((a, r) => Math.min(a, r.crr), Infinity);
+  const crrMax = allValid.reduce((a, r) => Math.max(a, r.crr), -Infinity);
   const windAsymmetry = Math.abs(avgA - avgB);
 
   const avgRSq  = allValid.reduce((s, r) => s + r.rSquared, 0) / allValid.length;

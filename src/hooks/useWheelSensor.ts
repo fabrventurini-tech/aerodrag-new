@@ -82,12 +82,13 @@ function parseCrrResult(b64: string) {
 // ── Hook principale ───────────────────────────────────────────────────────────
 
 export function useWheelSensor() {
-  const manager          = useRef<BleManager | null>(null);
-  const deviceRef        = useRef<Device | null>(null);
-  const subs             = useRef<Subscription[]>([]);
-  const disconnectSub    = useRef<Subscription | null>(null);
-  const preferredIdRef   = useRef<string | null>(null);
-  const scanStartedRef   = useRef(false);
+  const manager            = useRef<BleManager | null>(null);
+  const deviceRef          = useRef<Device | null>(null);
+  const subs               = useRef<Subscription[]>([]);
+  const disconnectSub      = useRef<Subscription | null>(null);
+  const preferredIdRef     = useRef<string | null>(null);
+  const scanStartedRef     = useRef(false);
+  const fallbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     setWheelSensorStatus,
@@ -160,6 +161,16 @@ export function useWheelSensor() {
       setWheelSensorStatus('connected');
       subscribeAll(connected);
 
+      // Cancella il fallback timeout: il device si è connesso prima degli 8s
+      if (fallbackTimeoutRef.current) {
+        clearTimeout(fallbackTimeoutRef.current);
+        fallbackTimeoutRef.current = null;
+      }
+
+      // Sincronizza configurazione (circonferenza pneumatico e massa) col firmware
+      const { calib: cfg } = useStore.getState();
+      writeConfig(cfg.tireCircM, cfg.massRiderKg + cfg.massBikeKg).catch(() => {});
+
       // Salva nella lista dei sensori noti e imposta come attivo
       // (operazione idempotente: aggiorna se già presente)
       const name = device.name ?? `AeroDrag Wheel ${device.id.slice(-5)}`;
@@ -209,7 +220,8 @@ export function useWheelSensor() {
 
     // Fallback: se il preferred non si trova in 8 secondi, accetta il primo disponibile
     if (preferredIdRef.current) {
-      setTimeout(() => {
+      fallbackTimeoutRef.current = setTimeout(() => {
+        fallbackTimeoutRef.current = null;
         if (!deviceRef.current && scanStartedRef.current) {
           // Rilancia scan senza filtro preferred
           manager.current?.stopDeviceScan();
@@ -315,6 +327,10 @@ export function useWheelSensor() {
       cleanupSubs();
       disconnectSub.current?.remove();
       disconnectSub.current = null;
+      if (fallbackTimeoutRef.current) {
+        clearTimeout(fallbackTimeoutRef.current);
+        fallbackTimeoutRef.current = null;
+      }
       manager.current?.destroy();
       manager.current = null;
       scanStartedRef.current = false;

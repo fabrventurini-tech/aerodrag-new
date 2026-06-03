@@ -409,9 +409,16 @@ export const useStore = create<AeroDragStore>((set, get) => ({
       crrSource = 'profile';
     } else {
       crr = calib.crr;
-      const hasCalibHistory = get().crrCalib.history.length > 0;
+      const history = get().crrCalib.history;
+      const lastCalibCrr = history.length > 0 ? history[0].crr : null;
       const isDefault = Math.abs(crr - DEFAULT_CALIB.crr) < 0.00001;
-      crrSource = isDefault && !hasCalibHistory ? 'default' : hasCalibHistory ? 'calibrated' : 'manual';
+      if (lastCalibCrr !== null && Math.abs(crr - lastCalibCrr) < 0.00001) {
+        crrSource = 'calibrated';
+      } else if (isDefault && history.length === 0) {
+        crrSource = 'default';
+      } else {
+        crrSource = 'manual';
+      }
     }
 
     const physics = computePhysics(next, mass, crr);
