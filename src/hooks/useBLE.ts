@@ -11,11 +11,15 @@
  *   0000aa05 → Identità device (R/W)          (device_id[18] + athlete_name[32])
  *   0000aa06 → Versione firmware (R)          (stringa ASCII)
  *   0000aa07 → OTA trigger (W)                (URL HTTP del .bin)
+ *   0000aa08 → Config parametri (W)           (float32×3: massKg, crr, pitotOffset)
+ *   0000aa09 → Physics output (NOTIFY 10 Hz)  (float32×7: cda, vAir, rho, pctAero, pAero, pRoll, pGrav)
  *
  * Note:
  *   - La velocità arriva da 0xaa03[3] come float32 m/s, NON da 0xaa04.
  *   - La batteria NON è esposta via BLE; compare solo nei frame Wi-Fi coach.
  *   - Scrivere il nome atleta su 0xaa05 sincronizza il display e i frame coach.
+ *   - 0xaa08 va scritto on-connect e ad ogni cambio di massa/Crr/pitotOffset in app.
+ *   - 0xaa09 è la sorgente di verità del CdA — l'ESP32 calcola in autonomia.
  */
 
 import { useEffect, useRef } from 'react';
@@ -23,6 +27,7 @@ import { Platform, PermissionsAndroid } from 'react-native';
 import { BleManager, Device, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 import { useStore } from '../store';
+import { PhysicsOutput } from '../physics/engine';
 
 // ── UUID ──────────────────────────────────────────────────────────────────────
 const SVC          = '0000aa00-0000-1000-8000-00805f9b34fb';
@@ -31,6 +36,8 @@ const CHR_IMU      = '0000aa02-0000-1000-8000-00805f9b34fb';
 const CHR_ENV      = '0000aa03-0000-1000-8000-00805f9b34fb';
 const CHR_SENSORS  = '0000aa04-0000-1000-8000-00805f9b34fb';
 const CHR_IDENTITY = '0000aa05-0000-1000-8000-00805f9b34fb';
+const CHR_CONFIG   = '0000aa08-0000-1000-8000-00805f9b34fb';
+const CHR_PHYSICS  = '0000aa09-0000-1000-8000-00805f9b34fb';
 
 // ── Parsing pacchetti BLE ─────────────────────────────────────────────────────
 
@@ -70,6 +77,23 @@ function parseSensors(b64: string) {
   };
 }
 
+function parsePhysics(b64: string): PhysicsOutput | null {
+  const buf = Buffer.from(b64, 'base64');
+  if (buf.length < 28) return null;
+  const cda    = buf.readFloatLE(0);
+  const vAirMs = buf.readFloatLE(4);
+  return {
+    cda,
+    vAirMs,
+    rhoKgM3:   buf.readFloatLE(8),
+    pctAero:   buf.readFloatLE(12),
+    pAeroW:    buf.readFloatLE(16),
+    pRollingW: buf.readFloatLE(20),
+    pGravityW: buf.readFloatLE(24),
+    valid:     cda > 0.01 && vAirMs > 0.5,
+  };
+}
+
 // ── Hook principale ───────────────────────────────────────────────────────────
 
 export function useBLE() {
@@ -81,7 +105,7 @@ export function useBLE() {
   const pairedIdRef    = useRef<string | null>(null);
 
   const {
-    setBleStatus, updateSensors,
+    setBleStatus, updateSensors, setPhysicsFromDevice,
     tick, isSimMode, pairedDeviceId,
   } = useStore();
 
@@ -121,7 +145,12 @@ export function useBLE() {
     subscribe(CHR_IMU,     (v) => updateSensors(parseIMU(v)));
     subscribe(CHR_ENV,     (v) => updateSensors(parseEnv(v)));   // includes speedMs
     subscribe(CHR_SENSORS, (v) => updateSensors(parseSensors(v)));
-    // CHR_IDENTITY (0x05aa) is READ+WRITE only — read once in connect(), not here
+    // CHR_PHYSICS (0xaa09): fisica calcolata dall'ESP32 — sorgente di verità del CdA
+    subscribe(CHR_PHYSICS, (v) => {
+      const p = parsePhysics(v);
+      if (p) setPhysicsFromDevice(p);
+    });
+    // CHR_IDENTITY (0xaa05) is READ+WRITE only — read once in connect(), not here
   }
 
   // ── Connessione ────────────────────────────────────────────────────────────
@@ -147,6 +176,16 @@ export function useBLE() {
         } catch {}
       }
 
+      // Sincronizza i parametri fisici con il firmware ESP32 (massa, Crr, pitotOffset)
+      // in modo che physics_compute() usi i valori aggiornati dall'utente
+      try {
+        const { calib } = useStore.getState();
+        const mass = (activeProfile?.massRiderKg ?? calib.massRiderKg)
+                   + (activeProfile?.massBikeKg  ?? calib.massBikeKg);
+        const crr  = activeProfile?.crr ?? calib.crr;
+        await writeDeviceConfig(connected, mass, crr, calib.pitotOffset);
+      } catch {}
+
       // Rilevamento disconnessione
       disconnectSub.current?.remove();
       disconnectSub.current = connected.onDisconnected(() => {
@@ -158,6 +197,31 @@ export function useBLE() {
     } catch {
       setBleStatus('error');
     }
+  }
+
+  // ── Scrittura config → ESP32 ──────────────────────────────────────────────
+  // Invia massa, Crr e pitotOffset al firmware; chiamata on-connect e ad ogni
+  // modifica dei parametri dall'utente (setCalib / cambio profilo atleta).
+  async function writeDeviceConfig(
+    device: Device,
+    massKg: number,
+    crr: number,
+    pitotOffset: number,
+  ): Promise<void> {
+    try {
+      const buf = Buffer.alloc(12);
+      buf.writeFloatLE(massKg,      0);
+      buf.writeFloatLE(crr,         4);
+      buf.writeFloatLE(pitotOffset, 8);
+      await device.writeCharacteristicWithResponseForService(
+        SVC, CHR_CONFIG, buf.toString('base64')
+      );
+    } catch {}
+  }
+
+  // Versione pubblica che usa il device attualmente connesso (per chiamate esterne)
+  async function syncConfigToDevice(massKg: number, crr: number, pitotOffset: number): Promise<void> {
+    if (deviceRef.current) await writeDeviceConfig(deviceRef.current, massKg, crr, pitotOffset);
   }
 
   // ── Scan ───────────────────────────────────────────────────────────────────
@@ -246,4 +310,6 @@ export function useBLE() {
       manager.current = null;
     };
   }, [isSimMode]);
+
+  return { syncConfigToDevice };
 }

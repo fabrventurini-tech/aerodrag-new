@@ -72,11 +72,23 @@ function TopBar() {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('live');
-  const { loadCalib, loadAthleteProfiles, loadPreviousSessions, loadPairedDeviceId } = useStore();
+  const {
+    loadCalib, loadAthleteProfiles, loadPreviousSessions, loadPairedDeviceId,
+    calib, activeAthleteId, athleteProfiles,
+  } = useStore();
 
-  useBLE();
+  const { syncConfigToDevice } = useBLE();
   useWheelSensor();
   useCadenceSensor();
+
+  // Ogni volta che l'utente modifica massa, Crr o pitotOffset, aggiorna l'ESP32
+  useEffect(() => {
+    const active = athleteProfiles.find((p) => p.id === activeAthleteId);
+    const mass = (active?.massRiderKg ?? calib.massRiderKg)
+               + (active?.massBikeKg  ?? calib.massBikeKg);
+    const crr  = active?.crr ?? calib.crr;
+    syncConfigToDevice(mass, crr, calib.pitotOffset);
+  }, [calib, activeAthleteId, athleteProfiles]);
 
   useEffect(() => {
     loadCalib();

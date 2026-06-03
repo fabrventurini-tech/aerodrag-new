@@ -188,8 +188,9 @@ interface AeroDragStore {
   loadCrrHistory:   () => Promise<void>;
 
   // Actions dati
-  updateSensors: (partial: Partial<SensorInput>) => void;
-  tick:          () => void;
+  updateSensors:        (partial: Partial<SensorInput>) => void;
+  setPhysicsFromDevice: (p: PhysicsOutput) => void;
+  tick:                 () => void;
 
   // Actions sessione
   startSession: () => void;
@@ -431,6 +432,10 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     const physics = computePhysics(next, mass, crr);
     set({ sensor: next, physics, crrSource, crrActive: crr });
   },
+
+  // Sovrascrive la fisica con il valore calcolato direttamente dall'ESP32.
+  // Chiamato ogni volta che arriva una notifica su CHR_PHYSICS (0xaa09).
+  setPhysicsFromDevice: (p) => set({ physics: p }),
 
   tick: () => {
     const { isRecording, sessionStart, sensor, physics, history } = get();
