@@ -87,7 +87,7 @@ export default function App() {
     const mass = (active?.massRiderKg ?? calib.massRiderKg)
                + (active?.massBikeKg  ?? calib.massBikeKg);
     const crr  = active?.crr ?? calib.crr;
-    syncConfigToDevice(mass, crr, calib.pitotOffset);
+    syncConfigToDevice(mass, crr);
   }, [calib, activeAthleteId, athleteProfiles]);
 
   useEffect(() => {

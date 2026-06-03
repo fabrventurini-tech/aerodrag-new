@@ -176,14 +176,13 @@ export function useBLE() {
         } catch {}
       }
 
-      // Sincronizza i parametri fisici con il firmware ESP32 (massa, Crr, pitotOffset)
-      // in modo che physics_compute() usi i valori aggiornati dall'utente
+      // Sincronizza massa e Crr con il firmware ESP32 (pitotOffset gestito dal device)
       try {
         const { calib } = useStore.getState();
         const mass = (activeProfile?.massRiderKg ?? calib.massRiderKg)
                    + (activeProfile?.massBikeKg  ?? calib.massBikeKg);
         const crr  = activeProfile?.crr ?? calib.crr;
-        await writeDeviceConfig(connected, mass, crr, calib.pitotOffset);
+        await writeDeviceConfig(connected, mass, crr);
       } catch {}
 
       // Rilevamento disconnessione
@@ -200,19 +199,18 @@ export function useBLE() {
   }
 
   // ── Scrittura config → ESP32 ──────────────────────────────────────────────
-  // Invia massa, Crr e pitotOffset al firmware; chiamata on-connect e ad ogni
-  // modifica dei parametri dall'utente (setCalib / cambio profilo atleta).
+  // Invia massa e Crr al firmware; chiamata on-connect e ad ogni modifica
+  // dei parametri dall'utente (setCalib / cambio profilo atleta).
+  // NB: pitotOffset NON viene inviato — la calibrazione pitot avviene sul device.
   async function writeDeviceConfig(
     device: Device,
     massKg: number,
     crr: number,
-    pitotOffset: number,
   ): Promise<void> {
     try {
-      const buf = Buffer.alloc(12);
-      buf.writeFloatLE(massKg,      0);
-      buf.writeFloatLE(crr,         4);
-      buf.writeFloatLE(pitotOffset, 8);
+      const buf = Buffer.alloc(8);
+      buf.writeFloatLE(massKg, 0);
+      buf.writeFloatLE(crr,    4);
       await device.writeCharacteristicWithResponseForService(
         SVC, CHR_CONFIG, buf.toString('base64')
       );
@@ -220,8 +218,8 @@ export function useBLE() {
   }
 
   // Versione pubblica che usa il device attualmente connesso (per chiamate esterne)
-  async function syncConfigToDevice(massKg: number, crr: number, pitotOffset: number): Promise<void> {
-    if (deviceRef.current) await writeDeviceConfig(deviceRef.current, massKg, crr, pitotOffset);
+  async function syncConfigToDevice(massKg: number, crr: number): Promise<void> {
+    if (deviceRef.current) await writeDeviceConfig(deviceRef.current, massKg, crr);
   }
 
   // ── Scan ───────────────────────────────────────────────────────────────────
