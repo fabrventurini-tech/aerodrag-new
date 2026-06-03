@@ -16,15 +16,20 @@ interface Props {
 
 // ── Costanti UI ───────────────────────────────────────────────────────────────
 
-const SPINUP_TARGET_KMH = 30;
-const COAST_DOWN_S_MAX  = 90;
+const COAST_DOWN_S_MAX = 90;
+
+export const QUALITY_OPTIONS = [
+  { label: 'Ottima',   kmh: 30, desc: 'Massima precisione · ~160 s per run'  },
+  { label: 'Buona',    kmh: 25, desc: 'Equilibrio sforzo/precisione · ~120 s' },
+  { label: 'Moderata', kmh: 20, desc: 'Sforzo ridotto · ~90 s per run'        },
+] as const;
 
 // ── Screen principale ─────────────────────────────────────────────────────────
 
 export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
   const {
     crrCalib, wheelStream, wheelSensorStatus,
-    startCrrCalib, readyForSpinup, startCrrRun, finalizeCrrRun,
+    startCrrCalib, setCrrTargetSpeed, readyForSpinup, startCrrRun, finalizeCrrRun,
     applyCrrResult, resetCrrCalib, loadCrrHistory,
   } = useStore();
 
@@ -153,15 +158,17 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
           {crrCalib.mode === 'setup' && (
             <SetupPhase
               protocol={crrCalib.protocol}
+              targetKmh={crrCalib.targetSpeedKmh}
+              onSelectQuality={setCrrTargetSpeed}
               onReady={readyForSpinup}
             />
           )}
 
-          {/* Fase: spin-up — atleta pedala fino a 30 km/h */}
+          {/* Fase: spin-up — atleta pedala fino alla velocità target */}
           {crrCalib.mode === 'spinup' && (
             <SpinupPhase
               speedKmh={speedKmh}
-              targetKmh={SPINUP_TARGET_KMH}
+              targetKmh={crrCalib.targetSpeedKmh}
               runIndex={crrCalib.currentRun}
               totalRuns={crrCalib.totalRuns}
               protocol={crrCalib.protocol}
@@ -256,9 +263,11 @@ function ProtocolSelection({ onSelect, disabled }: {
   );
 }
 
-function SetupPhase({ protocol, onReady }: {
-  protocol: 'indoor' | 'outdoor';
-  onReady: () => void;
+function SetupPhase({ protocol, targetKmh, onSelectQuality, onReady }: {
+  protocol:        'indoor' | 'outdoor';
+  targetKmh:       number;
+  onSelectQuality: (kmh: number) => void;
+  onReady:         () => void;
 }) {
   return (
     <View style={styles.section}>
@@ -279,6 +288,30 @@ function SetupPhase({ protocol, onReady }: {
             <CheckItem text="Assenza di traffico" />
           </>
         )}
+
+        <Text style={styles.qualityTitle}>Precisione calibrazione</Text>
+        <View style={styles.qualityRow}>
+          {QUALITY_OPTIONS.map((opt) => {
+            const active = targetKmh === opt.kmh;
+            return (
+              <TouchableOpacity
+                key={opt.kmh}
+                style={[styles.qualityCard, active && styles.qualityCardActive]}
+                onPress={() => onSelectQuality(opt.kmh)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.qualityLabel, active && styles.qualityLabelActive]}>
+                  {opt.label}
+                </Text>
+                <Text style={[styles.qualityKmh, active && styles.qualityKmhActive]}>
+                  {opt.kmh} km/h
+                </Text>
+                <Text style={styles.qualityDesc}>{opt.desc}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         <TouchableOpacity style={styles.primaryBtn} onPress={onReady}>
           <Text style={styles.primaryBtnText}>Tutto pronto — Inizia</Text>
         </TouchableOpacity>
@@ -638,4 +671,50 @@ const styles = StyleSheet.create({
   checkRow:  { flexDirection: 'row', gap: Sp.sm, alignItems: 'flex-start' },
   checkIcon: { fontSize: 14, color: Colors.teal, marginTop: 1 },
   checkText: { fontSize: 13, color: Colors.text, flex: 1, lineHeight: 20 },
+
+  qualityTitle: {
+    fontSize:      11,
+    color:         Colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginTop:     Sp.xs,
+  },
+  qualityRow: {
+    flexDirection: 'row',
+    gap:           Sp.sm,
+  },
+  qualityCard: {
+    flex:            1,
+    backgroundColor: Colors.s2,
+    borderRadius:    Radius.sm,
+    borderWidth:     0.5,
+    borderColor:     Colors.border,
+    padding:         Sp.sm,
+    gap:             2,
+    alignItems:      'center',
+  },
+  qualityCardActive: {
+    backgroundColor: Colors.tealBg,
+    borderColor:     Colors.teal,
+  },
+  qualityLabel: {
+    fontSize:   12,
+    fontWeight: '700',
+    color:      Colors.muted,
+  },
+  qualityLabelActive: { color: Colors.teal },
+  qualityKmh: {
+    fontSize:        16,
+    fontWeight:      '800',
+    color:           Colors.muted,
+    fontVariant:     ['tabular-nums'],
+  },
+  qualityKmhActive:  { color: Colors.textBright },
+  qualityDesc: {
+    fontSize:   9,
+    color:      Colors.muted,
+    textAlign:  'center',
+    lineHeight: 13,
+    marginTop:  2,
+  },
 });

@@ -53,16 +53,17 @@ export type CrrCalibMode =
   | 'error';
 
 export interface CrrCalibState {
-  mode:          CrrCalibMode;
-  protocol:      'indoor' | 'outdoor';
-  currentRun:    number;          // 1-3
-  totalRuns:     number;          // 3 per indoor, 6 per outdoor (3A+3B)
-  indoorRuns:    CrrRunResult[];
-  outdoorRunsA:  CrrRunResult[];
-  outdoorRunsB:  CrrRunResult[];
-  activeSamples: WheelSample[];   // campioni del run in corso
-  result:        CrrCalibResult | null;
-  history:       CrrCalibResult[];
+  mode:            CrrCalibMode;
+  protocol:        'indoor' | 'outdoor';
+  targetSpeedKmh:  number;          // velocità target spin-up [km/h]: 20 | 25 | 30
+  currentRun:      number;          // 1-3
+  totalRuns:       number;          // 3 per indoor, 6 per outdoor (3A+3B)
+  indoorRuns:      CrrRunResult[];
+  outdoorRunsA:    CrrRunResult[];
+  outdoorRunsB:    CrrRunResult[];
+  activeSamples:   WheelSample[];   // campioni del run in corso
+  result:          CrrCalibResult | null;
+  history:         CrrCalibResult[];
 }
 
 // ── Wheel sensor state ────────────────────────────────────────────────────────
@@ -85,15 +86,16 @@ const DEFAULT_CALIB: CalibrationParams = {
 };
 
 const DEFAULT_CRR_CALIB: CrrCalibState = {
-  mode:         'idle',
-  protocol:     'indoor',
-  currentRun:   1,
-  totalRuns:    3,
-  indoorRuns:   [],
-  outdoorRunsA: [],
-  outdoorRunsB: [],
-  activeSamples: [],
-  result:       null,
+  mode:           'idle',
+  protocol:       'indoor',
+  targetSpeedKmh: 30,
+  currentRun:     1,
+  totalRuns:      3,
+  indoorRuns:     [],
+  outdoorRunsA:   [],
+  outdoorRunsB:   [],
+  activeSamples:  [],
+  result:         null,
   history:      [],
 };
 
@@ -176,6 +178,7 @@ interface AeroDragStore {
 
   // Actions calibrazione Crr
   startCrrCalib:    (protocol: 'indoor' | 'outdoor') => void;
+  setCrrTargetSpeed: (kmh: number) => void;
   readyForSpinup:   () => void;
   startCrrRun:      () => void;
   addCrrSample:     (s: WheelSample) => void;
@@ -283,6 +286,10 @@ export const useStore = create<AeroDragStore>((set, get) => ({
         mode:       'setup',
       },
     });
+  },
+
+  setCrrTargetSpeed: (kmh) => {
+    set((st) => ({ crrCalib: { ...st.crrCalib, targetSpeedKmh: kmh } }));
   },
 
   readyForSpinup: () => {
