@@ -34,6 +34,20 @@ export function CoachScreen() {
     return () => disconnect();
   }, []);
 
+  // Re-invia hello quando i profili atleta sono caricati dopo la connessione WS.
+  // Risolve il race condition: ws.onopen spara prima che loadAthleteProfiles() finisca.
+  useEffect(() => {
+    if (status !== 'connected' || !wsRef.current) return;
+    if (wsRef.current.readyState !== WebSocket.OPEN) return;
+    const profile = athleteProfiles.find((p) => p.id === activeAthleteId);
+    if (!profile) return;
+    wsRef.current.send(JSON.stringify({
+      type:    'hello',
+      device:  pairedDeviceId ?? 'unknown',
+      athlete: profile.name,
+    }));
+  }, [activeAthleteId, athleteProfiles, status]);
+
   function disconnect() {
     if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null; }
     if (sendRef.current)      { clearInterval(sendRef.current);    sendRef.current = null; }

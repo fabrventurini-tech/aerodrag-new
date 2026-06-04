@@ -107,10 +107,23 @@ export function useBLE() {
   const {
     setBleStatus, updateSensors, setPhysicsFromDevice,
     tick, isSimMode, pairedDeviceId,
+    activeAthleteId, athleteProfiles,
   } = useStore();
 
   // Sync ref → leggi sempre il valore corrente nello scan callback
   useEffect(() => { pairedIdRef.current = pairedDeviceId; }, [pairedDeviceId]);
+
+  // Re-scrive il nome atleta su CHR_IDENTITY quando i profili sono caricati dopo
+  // la connessione BLE (risolve il race condition tra connect() e loadAthleteProfiles())
+  useEffect(() => {
+    if (!deviceRef.current) return;
+    const profile = athleteProfiles.find((p) => p.id === activeAthleteId);
+    if (!profile?.name) return;
+    const nameBytes = Buffer.from(profile.name.slice(0, 31), 'utf8');
+    deviceRef.current.writeCharacteristicWithResponseForService(
+      SVC, CHR_IDENTITY, nameBytes.toString('base64')
+    ).catch(() => {});
+  }, [activeAthleteId, athleteProfiles]);
 
   // ── Permessi Android ───────────────────────────────────────────────────────
   async function requestPermissions(): Promise<boolean> {
