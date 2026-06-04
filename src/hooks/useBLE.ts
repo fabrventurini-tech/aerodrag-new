@@ -13,6 +13,7 @@
  *   0000aa07 → OTA trigger (W)                (URL HTTP del .bin)
  *   0000aa08 → Config parametri (W)           (float32×3: massKg, crr, pitotOffset)
  *   0000aa09 → Physics output (NOTIFY 10 Hz)  (float32×7: cda, vAir, rho, pctAero, pAero, pRoll, pGrav)
+ *   0000aa0a → Batteria (NOTIFY 0.1 Hz)       (uint8: battery_pct 0-100)
  *
  * Note:
  *   - La velocità arriva da 0xaa03[3] come float32 m/s, NON da 0xaa04.
@@ -38,6 +39,7 @@ const CHR_SENSORS  = '0000aa04-0000-1000-8000-00805f9b34fb';
 const CHR_IDENTITY = '0000aa05-0000-1000-8000-00805f9b34fb';
 const CHR_CONFIG   = '0000aa08-0000-1000-8000-00805f9b34fb';
 const CHR_PHYSICS  = '0000aa09-0000-1000-8000-00805f9b34fb';
+const CHR_BATTERY  = '0000aa0a-0000-1000-8000-00805f9b34fb';
 
 // ── Parsing pacchetti BLE ─────────────────────────────────────────────────────
 
@@ -86,7 +88,7 @@ function parsePhysics(b64: string): PhysicsOutput | null {
     cda,
     vAirMs,
     rhoKgM3:   buf.readFloatLE(8),
-    pctAero:   buf.readFloatLE(12),
+    pctAero:   buf.readFloatLE(12) * 100,  // firmware invia 0.0-1.0, app usa 0-100
     pAeroW:    buf.readFloatLE(16),
     pRollingW: buf.readFloatLE(20),
     pGravityW: buf.readFloatLE(24),
@@ -105,7 +107,7 @@ export function useBLE() {
   const pairedIdRef    = useRef<string | null>(null);
 
   const {
-    setBleStatus, updateSensors, setPhysicsFromDevice,
+    setBleStatus, setBattery, updateSensors, setPhysicsFromDevice,
     tick, isSimMode, pairedDeviceId,
     activeAthleteId, athleteProfiles,
   } = useStore();
@@ -162,6 +164,11 @@ export function useBLE() {
     subscribe(CHR_PHYSICS, (v) => {
       const p = parsePhysics(v);
       if (p) setPhysicsFromDevice(p);
+    });
+    // CHR_BATTERY (0xaa0a): % batteria a 0.1 Hz
+    subscribe(CHR_BATTERY, (v) => {
+      const buf = Buffer.from(v, 'base64');
+      if (buf.length >= 1) setBattery(buf.readUInt8(0));
     });
     // CHR_IDENTITY (0xaa05) is READ+WRITE only — read once in connect(), not here
   }
