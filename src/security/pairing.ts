@@ -12,13 +12,24 @@
  *   - Il filtro MAC impedisce connessioni a device non accoppiati
  *   - I dati BLE sono cifrati a livello link (BLE 4.2+ con bonding)
  *   - Il device ESP32 accetta connessioni solo dal MAC dell'app accoppiata
+ *
+ * Wheel sensor (sensore ruota Crr):
+ *   - Pairing NON esclusivo: il sensore ruota usa BLE aperto senza bonding
+ *   - Qualsiasi app compatibile (Wahoo, Garmin, Strava) può leggere il profilo CSC standard
+ *   - L'app AeroDrag salva un "sensore preferito" per riconnettersi automaticamente
+ *   - Ma non blocca altri device dal leggere il sensore
+ *   - Il sensore può essere accoppiato a più app contemporaneamente
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const KEY_PAIRED_DEVICE   = 'aerodrag:paired_device_id';
-const KEY_PAIRED_NAME     = 'aerodrag:paired_device_name';
+const KEY_PAIRED_DEVICE    = 'aerodrag:paired_device_id';
+const KEY_PAIRED_NAME      = 'aerodrag:paired_device_name';
 const KEY_SENSOR_WHITELIST = 'aerodrag:sensor_whitelist';
+const KEY_WHEEL_SENSORS    = 'aerodrag:wheel_sensors';      // lista sensori ruota
+const KEY_WHEEL_ACTIVE_ID  = 'aerodrag:wheel_active_id';   // ID del sensore preferito
+// KEY_WHEEL_SENSOR (legacy, singolo) letto in migrazione automatica
+const KEY_WHEEL_SENSOR_OLD = 'aerodrag:wheel_sensor';
 
 export interface PairedDevice {
   id:   string;   // MAC address BLE del device AeroDrag
@@ -83,6 +94,167 @@ export async function removeSensorFromWhitelist(id: string): Promise<void> {
 
 export async function clearSensorWhitelist(): Promise<void> {
   await AsyncStorage.removeItem(KEY_SENSOR_WHITELIST);
+}
+
+// ── Wheel sensor (sensore ruota Crr) — pairing non esclusivo e MULTIPLO ──────
+//
+// Design:
+//   - L'app mantiene una LISTA di sensori ruota registrati (per bici diverse)
+//   - Uno dei sensori è "attivo" → l'app lo preferisce durante la scan
+//   - Il sensore firmware accetta fino a 3 centrali simultanei (MAX_PRPH_CONNECTIONS)
+//   - Non c'è bonding → qualsiasi app (Wahoo, Garmin, coach, atleta) si connette
+//   - Lato app, la lista serve solo come "memoria" per identificare rapidamente
+//     un sensore già visto — non è un filtro di sicurezza
+//
+// Casi d'uso multi-sensore:
+//   • Atleta con 2 bici → sensore ruota A (bici strada) + B (bici crono)
+//   • Team con più atleti → ogni atleta ha il suo sensore, il coach switcha
+//   • Coaching remoto → coach e atleta connettono entrambi allo stesso sensore
+
+export interface WheelSensorDevice {
+  id:        string;   // MAC address BLE
+  name:      string;   // es. "Wheel Bici Strada", "Wheel Bici Crono"
+  pairedAt:  number;   // timestamp Unix
+  firmware?: string;
+  bikeLabel?: string;  // etichetta opzionale (es. "Factor O2", "Cervélo P5")
+}
+
+// Carica tutta la lista (con migrazione automatica dal formato legacy singolo)
+export async function loadWheelSensorList(): Promise<WheelSensorDevice[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEY_WHEEL_SENSORS);
+    if (raw) return JSON.parse(raw) as WheelSensorDevice[];
+
+    // Migrazione: se esiste il vecchio formato singolo, lo importa nella lista
+    const legacy = await AsyncStorage.getItem(KEY_WHEEL_SENSOR_OLD);
+    if (legacy) {
+      const device = JSON.parse(legacy) as WheelSensorDevice;
+      const list = [device];
+      await AsyncStorage.setItem(KEY_WHEEL_SENSORS, JSON.stringify(list));
+      await AsyncStorage.removeItem(KEY_WHEEL_SENSOR_OLD);
+      return list;
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+// Aggiunge o aggiorna un sensore nella lista
+export async function saveWheelSensor(device: WheelSensorDevice): Promise<void> {
+  const list = await loadWheelSensorList();
+  const idx  = list.findIndex((s) => s.id === device.id);
+  const next = idx >= 0
+    ? list.map((s) => (s.id === device.id ? device : s))
+    : [...list, device];
+  await AsyncStorage.setItem(KEY_WHEEL_SENSORS, JSON.stringify(next));
+}
+
+// Rimuove un sensore dalla lista (e resetta active se era quello attivo)
+export async function removeWheelSensor(id: string): Promise<void> {
+  const list = await loadWheelSensorList();
+  const next = list.filter((s) => s.id !== id);
+  await AsyncStorage.setItem(KEY_WHEEL_SENSORS, JSON.stringify(next));
+  const activeId = await loadActiveWheelSensorId();
+  if (activeId === id) await AsyncStorage.removeItem(KEY_WHEEL_ACTIVE_ID);
+}
+
+// ID del sensore attivo (preferito durante la scan)
+export async function loadActiveWheelSensorId(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(KEY_WHEEL_ACTIVE_ID);
+  } catch {
+    return null;
+  }
+}
+
+export async function setActiveWheelSensorId(id: string | null): Promise<void> {
+  if (id) await AsyncStorage.setItem(KEY_WHEEL_ACTIVE_ID, id);
+  else    await AsyncStorage.removeItem(KEY_WHEEL_ACTIVE_ID);
+}
+
+// Shortcut: carica il sensore attivo (o il primo della lista se nessuno attivo)
+export async function loadPreferredWheelSensor(): Promise<WheelSensorDevice | null> {
+  const list     = await loadWheelSensorList();
+  if (list.length === 0) return null;
+  const activeId = await loadActiveWheelSensorId();
+  return list.find((s) => s.id === activeId) ?? list[0];
+}
+
+// Compat legacy: alias per saveWheelSensor
+export async function savePreferredWheelSensor(device: WheelSensorDevice): Promise<void> {
+  await saveWheelSensor(device);
+  await setActiveWheelSensorId(device.id);
+}
+
+// Compat legacy: rimuove solo il sensore attivo
+export async function removePreferredWheelSensor(): Promise<void> {
+  const active = await loadPreferredWheelSensor();
+  if (active) await removeWheelSensor(active.id);
+}
+
+// ── Cadence sensor — pairing non esclusivo ────────────────────────────────────
+//
+// Compatibile con qualsiasi sensore BLE CSC (0x1816) che supporti Crank
+// Revolution Data (bit1 di CSC Feature): Wahoo RPM Cadence, Garmin Cadence,
+// 4iiii, Polar, Stages, nonché il sensore AeroDrag Cadence proprietario.
+// Lo stesso meccanismo del wheel sensor: lista + active ID.
+
+const KEY_CADENCE_SENSORS   = 'aerodrag:cadence_sensors';
+const KEY_CADENCE_ACTIVE_ID = 'aerodrag:cadence_active_id';
+
+export interface CadenceSensorDevice {
+  id:        string;
+  name:      string;
+  pairedAt:  number;
+  firmware?: string;
+  bikeLabel?: string;
+}
+
+export async function loadCadenceSensorList(): Promise<CadenceSensorDevice[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEY_CADENCE_SENSORS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveCadenceSensor(device: CadenceSensorDevice): Promise<void> {
+  const list = await loadCadenceSensorList();
+  const idx  = list.findIndex((s) => s.id === device.id);
+  const next = idx >= 0
+    ? list.map((s) => (s.id === device.id ? device : s))
+    : [...list, device];
+  await AsyncStorage.setItem(KEY_CADENCE_SENSORS, JSON.stringify(next));
+}
+
+export async function removeCadenceSensor(id: string): Promise<void> {
+  const list = await loadCadenceSensorList();
+  const next = list.filter((s) => s.id !== id);
+  await AsyncStorage.setItem(KEY_CADENCE_SENSORS, JSON.stringify(next));
+  const activeId = await loadActiveCadenceSensorId();
+  if (activeId === id) await AsyncStorage.removeItem(KEY_CADENCE_ACTIVE_ID);
+}
+
+export async function loadActiveCadenceSensorId(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(KEY_CADENCE_ACTIVE_ID);
+  } catch {
+    return null;
+  }
+}
+
+export async function setActiveCadenceSensorId(id: string | null): Promise<void> {
+  if (id) await AsyncStorage.setItem(KEY_CADENCE_ACTIVE_ID, id);
+  else    await AsyncStorage.removeItem(KEY_CADENCE_ACTIVE_ID);
+}
+
+export async function loadPreferredCadenceSensor(): Promise<CadenceSensorDevice | null> {
+  const list     = await loadCadenceSensorList();
+  if (list.length === 0) return null;
+  const activeId = await loadActiveCadenceSensorId();
+  return list.find((s) => s.id === activeId) ?? list[0];
 }
 
 // ── Validazione QR code device ────────────────────────────────────────────────

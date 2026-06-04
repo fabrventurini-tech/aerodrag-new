@@ -7,21 +7,56 @@ import { useStore } from '../store';
 import {
   loadPairedDevice, unpairDevice, loadSensorWhitelist,
   removeSensorFromWhitelist, clearSensorWhitelist,
-  PairedDevice, SensorEntry,
+  loadWheelSensorList, removeWheelSensor,
+  loadActiveWheelSensorId, setActiveWheelSensorId,
+  loadCadenceSensorList, removeCadenceSensor,
+  loadActiveCadenceSensorId, setActiveCadenceSensorId,
+  PairedDevice, SensorEntry, WheelSensorDevice, CadenceSensorDevice,
 } from '../security/pairing';
 import { QRPairScreen } from './QRPairScreen';
+import { CrrCalibrationScreen } from './CrrCalibrationScreen';
 import { Colors, Sp, Radius } from '../theme';
 
 export function SettingsScreen() {
-  const { calib, setCalib, isSimMode, setSimMode, setPairedDevice: setStorePairedDevice } = useStore();
+  const {
+    calib, setCalib, isSimMode, setSimMode,
+    setPairedDevice: setStorePairedDevice,
+    wheelSensorStatus, wheelSensorId, crrCalib,
+    cadenceSensorStatus, cadenceSensorId,
+  } = useStore();
 
   const [pairedDevice, setPairedDevice]     = useState<PairedDevice | null>(null);
   const [sensorList, setSensorList]         = useState<SensorEntry[]>([]);
-  const [showScanner, setShowScanner]       = useState(false);
+  const [wheelSensors, setWheelSensors]       = useState<WheelSensorDevice[]>([]);
+  const [activeWheelId, setActiveWheelId]     = useState<string | null>(null);
+  const [cadenceSensors, setCadenceSensors]   = useState<CadenceSensorDevice[]>([]);
+  const [activeCadenceId, setActiveCadenceId] = useState<string | null>(null);
+  const [showScanner, setShowScanner]         = useState(false);
+  const [showCrrCalib, setShowCrrCalib]       = useState(false);
+
+  const refreshWheelSensors = async () => {
+    const [list, activeId] = await Promise.all([
+      loadWheelSensorList(),
+      loadActiveWheelSensorId(),
+    ]);
+    setWheelSensors(list);
+    setActiveWheelId(activeId ?? list[0]?.id ?? null);
+  };
+
+  const refreshCadenceSensors = async () => {
+    const [list, activeId] = await Promise.all([
+      loadCadenceSensorList(),
+      loadActiveCadenceSensorId(),
+    ]);
+    setCadenceSensors(list);
+    setActiveCadenceId(activeId ?? list[0]?.id ?? null);
+  };
 
   useEffect(() => {
     loadPairedDevice().then(setPairedDevice);
     loadSensorWhitelist().then(setSensorList);
+    refreshWheelSensors();
+    refreshCadenceSensors();
   }, []);
 
   async function handleUnpair() {
@@ -52,6 +87,55 @@ export function SettingsScreen() {
     await clearSensorWhitelist();
     setSensorList([]);
   }
+
+  async function handleRemoveWheelSensor(id: string, name: string) {
+    Alert.alert(
+      'Rimuovi sensore',
+      `Rimuovere "${name}" dalla lista?`,
+      [
+        { text: 'Annulla', style: 'cancel' },
+        {
+          text: 'Rimuovi',
+          style: 'destructive',
+          onPress: async () => {
+            await removeWheelSensor(id);
+            await refreshWheelSensors();
+          },
+        },
+      ]
+    );
+  }
+
+  async function handleSetActiveWheelSensor(id: string) {
+    await setActiveWheelSensorId(id);
+    setActiveWheelId(id);
+  }
+
+  async function handleRemoveCadenceSensor(id: string, name: string) {
+    Alert.alert(
+      'Rimuovi sensore',
+      `Rimuovere "${name}" dalla lista?`,
+      [
+        { text: 'Annulla', style: 'cancel' },
+        {
+          text: 'Rimuovi',
+          style: 'destructive',
+          onPress: async () => {
+            await removeCadenceSensor(id);
+            await refreshCadenceSensors();
+          },
+        },
+      ]
+    );
+  }
+
+  async function handleSetActiveCadenceSensor(id: string) {
+    await setActiveCadenceSensorId(id);
+    setActiveCadenceId(id);
+  }
+
+  const lastCrr = crrCalib.result ?? crrCalib.history[0] ?? null;
+  const wheelConnected = wheelSensorStatus === 'connected';
 
   return (
     <ScrollView
@@ -99,6 +183,149 @@ export function SettingsScreen() {
         onClose={() => setShowScanner(false)}
         onPaired={(device) => setPairedDevice(device)}
       />
+
+      {/* ── Sensori Ruota Crr ── */}
+      <Text style={styles.sectionTitle}>Sensori Ruota — Crr</Text>
+      <View style={styles.card}>
+
+        {/* Stato connessione live */}
+        <View style={styles.row}>
+          <View style={[styles.dot, {
+            backgroundColor: wheelConnected ? Colors.teal :
+              wheelSensorStatus === 'scanning' ? Colors.amber : Colors.muted
+          }]} />
+          <Text style={styles.deviceName}>
+            {wheelConnected
+              ? `Connesso${wheelSensorId ? ` · ${wheelSensorId.slice(-5)}` : ''}`
+              : wheelSensorStatus === 'scanning'
+                ? 'Ricerca sensore…'
+                : 'Nessun sensore attivo'}
+          </Text>
+        </View>
+
+        <Text style={styles.hint}>
+          Il sensore usa pairing multiplo non esclusivo: fino a 3 centrali
+          simultanei (es. app atleta + app coach + Garmin). Wahoo e Garmin
+          leggono la velocità via profilo CSC standard senza configurazione.
+        </Text>
+
+        {/* Lista sensori registrati */}
+        {wheelSensors.length > 0 && (
+          <>
+            <Text style={styles.subSectionLabel}>Sensori registrati</Text>
+            {wheelSensors.map((s) => (
+              <View key={s.id} style={styles.wheelSensorRow}>
+                <TouchableOpacity
+                  style={styles.wheelSensorLeft}
+                  onPress={() => handleSetActiveWheelSensor(s.id)}
+                >
+                  <View style={[styles.radioOuter, s.id === activeWheelId && styles.radioActive]}>
+                    {s.id === activeWheelId && <View style={styles.radioInner} />}
+                  </View>
+                  <View style={styles.wheelSensorInfo}>
+                    <Text style={styles.wheelSensorName}>{s.name}</Text>
+                    {s.bikeLabel && <Text style={styles.wheelSensorBike}>{s.bikeLabel}</Text>}
+                    <Text style={styles.deviceId}>{s.id}</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleRemoveWheelSensor(s.id, s.name)}>
+                  <Text style={styles.removeText}>Rimuovi</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </>
+        )}
+
+        {wheelSensors.length === 0 && (
+          <Text style={styles.emptyText}>
+            Nessun sensore registrato.{'\n'}
+            Il sensore viene aggiunto automaticamente al primo collegamento.
+          </Text>
+        )}
+
+        {/* Ultimo Crr */}
+        {lastCrr && (
+          <View style={styles.crrRow}>
+            <Text style={styles.crrLabel}>Ultimo Crr misurato</Text>
+            <Text style={styles.crrValue}>{lastCrr.crr.toFixed(4)}</Text>
+            <Text style={styles.crrConf}>{lastCrr.confidence}% conf.</Text>
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={[styles.primaryBtn, !wheelConnected && styles.btnDisabled]}
+          onPress={() => setShowCrrCalib(true)}
+        >
+          <Text style={styles.primaryBtnText}>Calibra Crr</Text>
+        </TouchableOpacity>
+      </View>
+
+      <CrrCalibrationScreen
+        visible={showCrrCalib}
+        onClose={() => setShowCrrCalib(false)}
+        sendCommand={async () => true}
+      />
+
+      {/* ── Sensore Cadenza ── */}
+      <Text style={styles.sectionTitle}>Sensore Cadenza</Text>
+      <View style={styles.card}>
+
+        {/* Stato connessione live */}
+        <View style={styles.row}>
+          <View style={[styles.dot, {
+            backgroundColor:
+              cadenceSensorStatus === 'connected'  ? Colors.amber :
+              cadenceSensorStatus === 'scanning'   ? Colors.blue  : Colors.muted,
+          }]} />
+          <Text style={styles.deviceName}>
+            {cadenceSensorStatus === 'connected'
+              ? `Connesso${cadenceSensorId ? ` · ${cadenceSensorId.slice(-5)}` : ''}`
+              : cadenceSensorStatus === 'scanning'
+                ? 'Ricerca sensore…'
+                : 'Nessun sensore attivo'}
+          </Text>
+        </View>
+
+        <Text style={styles.hint}>
+          Compatibile con qualsiasi sensore BLE CSC (Wahoo RPM Cadence,
+          Garmin Cadence, 4iiii, Polar, Stages) e con il sensore AeroDrag
+          Cadence. Si connette automaticamente al sensore preferito.
+        </Text>
+
+        {/* Lista sensori registrati */}
+        {cadenceSensors.length > 0 && (
+          <>
+            <Text style={styles.subSectionLabel}>Sensori registrati</Text>
+            {cadenceSensors.map((s) => (
+              <View key={s.id} style={styles.wheelSensorRow}>
+                <TouchableOpacity
+                  style={styles.wheelSensorLeft}
+                  onPress={() => handleSetActiveCadenceSensor(s.id)}
+                >
+                  <View style={[styles.radioOuter, s.id === activeCadenceId && styles.radioAmber]}>
+                    {s.id === activeCadenceId && <View style={styles.radioInnerAmber} />}
+                  </View>
+                  <View style={styles.wheelSensorInfo}>
+                    <Text style={styles.wheelSensorName}>{s.name}</Text>
+                    {s.bikeLabel && <Text style={styles.wheelSensorBike}>{s.bikeLabel}</Text>}
+                    <Text style={styles.deviceId}>{s.id}</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleRemoveCadenceSensor(s.id, s.name)}>
+                  <Text style={styles.removeText}>Rimuovi</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </>
+        )}
+
+        {cadenceSensors.length === 0 && (
+          <Text style={styles.emptyText}>
+            Nessun sensore registrato.{'\n'}
+            Il sensore viene aggiunto automaticamente al primo collegamento.
+          </Text>
+        )}
+      </View>
 
       {/* ── Sensori BLE accoppiati ── */}
       <Text style={styles.sectionTitle}>Sensori BLE accoppiati</Text>
@@ -320,4 +547,69 @@ const styles = StyleSheet.create({
   },
   switchLabel: { fontSize: 13, color: Colors.text },
   switchHint:  { fontSize: 11, color: Colors.muted },
+
+  subSectionLabel: {
+    fontSize:      11,
+    color:         Colors.muted,
+    marginTop:     Sp.xs,
+    marginBottom:  2,
+  },
+  wheelSensorRow: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    justifyContent: 'space-between',
+    paddingVertical: Sp.sm,
+    borderBottomWidth: 0.5,
+    borderBottomColor: Colors.border,
+  },
+  wheelSensorLeft: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           Sp.sm,
+    flex:          1,
+  },
+  wheelSensorInfo: { gap: 2, flex: 1 },
+  wheelSensorName: { fontSize: 13, color: Colors.text, fontWeight: '600' },
+  wheelSensorBike: { fontSize: 11, color: Colors.teal },
+  radioOuter: {
+    width:        18,
+    height:       18,
+    borderRadius: 9,
+    borderWidth:  1.5,
+    borderColor:  Colors.muted,
+    alignItems:   'center',
+    justifyContent: 'center',
+  },
+  radioActive: { borderColor: Colors.teal },
+  radioInner: {
+    width:           9,
+    height:          9,
+    borderRadius:    5,
+    backgroundColor: Colors.teal,
+  },
+  radioAmber:      { borderColor: Colors.amber },
+  radioInnerAmber: { width: 9, height: 9, borderRadius: 5, backgroundColor: Colors.amber },
+  crrRow: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    gap:            Sp.sm,
+    paddingVertical: Sp.xs,
+    borderTopWidth: 0.5,
+    borderTopColor: Colors.border,
+  },
+  crrLabel: { fontSize: 11, color: Colors.muted, flex: 1 },
+  crrValue: { fontSize: 18, color: Colors.teal, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  crrConf:  { fontSize: 11, color: Colors.amber },
+
+  primaryBtn: {
+    backgroundColor: Colors.tealBg,
+    borderRadius:    Radius.sm,
+    borderWidth:     0.5,
+    borderColor:     Colors.teal,
+    padding:         Sp.sm,
+    alignItems:      'center',
+    marginTop:       Sp.xs,
+  },
+  primaryBtnText: { color: Colors.teal, fontWeight: '600', fontSize: 13 },
+  btnDisabled: { opacity: 0.4 },
 });
