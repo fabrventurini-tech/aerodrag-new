@@ -19,6 +19,14 @@ import { wheelSensorApi } from '../hooks/useWheelSensor';
 import { cadenceSensorApi } from '../hooks/useCadenceSensor';
 import { Colors, Sp, Radius } from '../theme';
 
+// Circonferenze comuni (ETRTO → mm di rotolamento effettivo)
+const WHEEL_PRESETS = [
+  { label: '700×23', mm: 2096 },
+  { label: '700×25', mm: 2105 },
+  { label: '700×28', mm: 2136 },
+  { label: '700×32', mm: 2155 },
+] as const;
+
 export function SettingsScreen() {
   const {
     calib, setCalib, isSimMode, setSimMode,
@@ -392,6 +400,39 @@ export function SettingsScreen() {
           onChange={(v) => setCalib({ crr: v })}
         />
         <CalibRow
+          label="Circonferenza ruota (mm)"
+          value={calib.tireCircM * 1000}
+          step={1}
+          min={1000}
+          max={2500}
+          decimals={0}
+          onChange={(v) => setCalib({ tireCircM: v / 1000 })}
+        />
+        <View style={styles.presetRow}>
+          {WHEEL_PRESETS.map((p) => {
+            const active = Math.round(calib.tireCircM * 1000) === p.mm;
+            return (
+              <TouchableOpacity
+                key={p.mm}
+                style={[styles.presetChip, active && styles.presetChipActive]}
+                onPress={() => setCalib({ tireCircM: p.mm / 1000 })}
+              >
+                <Text style={[styles.presetLabel, active && styles.presetLabelActive]}>
+                  {p.label}
+                </Text>
+                <Text style={[styles.presetMm, active && styles.presetLabelActive]}>
+                  {p.mm}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Text style={styles.hint}>
+          La circonferenza viene inviata sia al device AeroDrag (ESP32) sia al
+          sensore ruota Crr. Alla connessione l'app adotta il valore salvato
+          sul device.
+        </Text>
+        <CalibRow
           label="Offset Pitot (Pa)"
           value={calib.pitotOffset}
           step={0.5}
@@ -625,4 +666,23 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: { color: Colors.teal, fontWeight: '600', fontSize: 13 },
   btnDisabled: { opacity: 0.4 },
+
+  presetRow: { flexDirection: 'row', gap: Sp.sm },
+  presetChip: {
+    flex:            1,
+    backgroundColor: Colors.s2,
+    borderRadius:    Radius.sm,
+    borderWidth:     0.5,
+    borderColor:     Colors.border,
+    paddingVertical: Sp.xs,
+    alignItems:      'center',
+    gap:             1,
+  },
+  presetChipActive: {
+    backgroundColor: Colors.tealBg,
+    borderColor:     Colors.teal,
+  },
+  presetLabel:       { fontSize: 11, fontWeight: '600', color: Colors.muted },
+  presetMm:          { fontSize: 10, color: Colors.muted, fontVariant: ['tabular-nums'] },
+  presetLabelActive: { color: Colors.teal },
 });

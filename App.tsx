@@ -5,7 +5,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { useBLE } from './src/hooks/useBLE';
-import { useWheelSensor } from './src/hooks/useWheelSensor';
+import { useWheelSensor, wheelSensorApi } from './src/hooks/useWheelSensor';
 import { useCadenceSensor } from './src/hooks/useCadenceSensor';
 import { coachAutoConnect } from './src/coach/link';
 import { useStore } from './src/store';
@@ -82,13 +82,15 @@ export default function App() {
   useWheelSensor();
   useCadenceSensor();
 
-  // Ogni volta che l'utente modifica massa, Crr o pitotOffset, aggiorna l'ESP32
+  // Ogni volta che l'utente modifica massa, Crr o circonferenza ruota,
+  // aggiorna sia l'ESP32 (config 12 B) sia il sensore ruota nRF52840
   useEffect(() => {
     const active = athleteProfiles.find((p) => p.id === activeAthleteId);
     const mass = (active?.massRiderKg ?? calib.massRiderKg)
                + (active?.massBikeKg  ?? calib.massBikeKg);
     const crr  = active?.crr ?? calib.crr;
     syncConfigToDevice(mass, crr);
+    wheelSensorApi.writeConfig(calib.tireCircM, mass).catch(() => {});
   }, [calib, activeAthleteId, athleteProfiles]);
 
   useEffect(() => {
