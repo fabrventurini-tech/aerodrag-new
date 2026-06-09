@@ -16,6 +16,7 @@ import {
 import { QRPairScreen } from './QRPairScreen';
 import { CrrCalibrationScreen } from './CrrCalibrationScreen';
 import { wheelSensorApi } from '../hooks/useWheelSensor';
+import { cadenceSensorApi } from '../hooks/useCadenceSensor';
 import { Colors, Sp, Radius } from '../theme';
 
 export function SettingsScreen() {
@@ -110,6 +111,7 @@ export function SettingsScreen() {
   async function handleSetActiveWheelSensor(id: string) {
     await setActiveWheelSensorId(id);
     setActiveWheelId(id);
+    wheelSensorApi.setPreferred(id);  // applica subito senza riavvio
   }
 
   async function handleRemoveCadenceSensor(id: string, name: string) {
@@ -133,6 +135,7 @@ export function SettingsScreen() {
   async function handleSetActiveCadenceSensor(id: string) {
     await setActiveCadenceSensorId(id);
     setActiveCadenceId(id);
+    cadenceSensorApi.setPreferred(id);  // applica subito senza riavvio
   }
 
   const lastCrr = crrCalib.result ?? crrCalib.history[0] ?? null;

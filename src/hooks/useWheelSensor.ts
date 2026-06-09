@@ -62,14 +62,16 @@ export const WHEEL_CMD = {
 // qui le funzioni reali, così gli screen (es. SettingsScreen) possono inviare
 // comandi al sensore senza rimontare il hook BLE.
 export const wheelSensorApi = {
-  sendCommand: async (_cmd: number): Promise<boolean> => false,
-  writeConfig: async (_tireCircM: number, _massKg: number): Promise<boolean> => false,
+  sendCommand:  async (_cmd: number): Promise<boolean> => false,
+  writeConfig:  async (_tireCircM: number, _massKg: number): Promise<boolean> => false,
+  setPreferred: (_id: string | null): void => {},
 };
 
 // ── Parsing pacchetti ─────────────────────────────────────────────────────────
 
 function parseStream(b64: string) {
   const buf = Buffer.from(b64, 'base64');
+  if (buf.length < 16) return null;  // pacchetto troncato → scarta
   return {
     speedMs:  buf.readFloatLE(0),
     accelMs2: buf.readFloatLE(4),
@@ -80,6 +82,7 @@ function parseStream(b64: string) {
 
 function parseCrrResult(b64: string) {
   const buf = Buffer.from(b64, 'base64');
+  if (buf.length < 6) return null;  // pacchetto troncato → scarta
   return {
     crr:      buf.readFloatLE(0),
     quality:  buf.readUInt8(4),   // 0-100
@@ -154,8 +157,14 @@ export function useWheelSensor() {
       subs.current.push(s);
     };
 
-    sub(CHR_STREAM,  (v) => updateWheelStream(parseStream(v)));
-    sub(CHR_CRR_RES, (v) => onCrrRunComplete(parseCrrResult(v)));
+    sub(CHR_STREAM,  (v) => {
+      const s = parseStream(v);
+      if (s) updateWheelStream(s);
+    });
+    sub(CHR_CRR_RES, (v) => {
+      const r = parseCrrResult(v);
+      if (r) onCrrRunComplete(r);
+    });
   }
 
   // ── Connessione ────────────────────────────────────────────────────────────
@@ -350,8 +359,9 @@ export function useWheelSensor() {
   }, [isSimMode]);
 
   // Registra le funzioni reali nell'API a livello modulo (per gli screen)
-  wheelSensorApi.sendCommand = sendCommand;
-  wheelSensorApi.writeConfig = writeConfig;
+  wheelSensorApi.sendCommand  = sendCommand;
+  wheelSensorApi.writeConfig  = writeConfig;
+  wheelSensorApi.setPreferred = (id) => { preferredIdRef.current = id; };
 
   return { sendCommand, writeConfig };
 }

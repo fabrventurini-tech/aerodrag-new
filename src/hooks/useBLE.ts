@@ -44,8 +44,12 @@ const CHR_BATTERY  = '0000aa0a-0000-1000-8000-00805f9b34fb';
 
 // ── Parsing pacchetti BLE ─────────────────────────────────────────────────────
 
+// Tutti i parser scartano i pacchetti troncati (return null): un RangeError
+// dentro il callback BLE farebbe crashare l'app.
+
 function parsePitot(b64: string) {
   const buf = Buffer.from(b64, 'base64');
+  if (buf.length < 8) return null;
   return {
     pitotPa:  buf.readFloatLE(0),
     staticPa: buf.readFloatLE(4),
@@ -54,6 +58,7 @@ function parsePitot(b64: string) {
 
 function parseIMU(b64: string) {
   const buf = Buffer.from(b64, 'base64');
+  if (buf.length < 8) return null;
   return {
     pitchDeg: buf.readFloatLE(0),
     rollDeg:  buf.readFloatLE(4),
@@ -62,6 +67,7 @@ function parseIMU(b64: string) {
 
 function parseEnv(b64: string) {
   const buf = Buffer.from(b64, 'base64');
+  if (buf.length < 16) return null;
   return {
     tempC:    buf.readFloatLE(0),
     humidity: buf.readFloatLE(4) / 100,  // firmware sends 0-100
@@ -73,6 +79,7 @@ function parseEnv(b64: string) {
 function parseSensors(b64: string) {
   const buf = Buffer.from(b64, 'base64');
   // firmware CHR_ANT = power(2) + cad(1) + hr(1) = 4 bytes; speed is NOT here
+  if (buf.length < 4) return null;
   return {
     powerW:     buf.readUInt16LE(0),
     cadenceRpm: buf.readUInt8(2),
@@ -157,11 +164,13 @@ export function useBLE() {
       subs.current.push(sub);
     };
 
-    subscribe(CHR_PITOT,   (v) => updateSensors(parsePitot(v)));
-    subscribe(CHR_IMU,     (v) => updateSensors(parseIMU(v)));
-    subscribe(CHR_ENV,     (v) => updateSensors(parseEnv(v)));   // includes speedMs
+    subscribe(CHR_PITOT,   (v) => { const p = parsePitot(v); if (p) updateSensors(p); });
+    subscribe(CHR_IMU,     (v) => { const p = parseIMU(v);   if (p) updateSensors(p); });
+    subscribe(CHR_ENV,     (v) => { const p = parseEnv(v);   if (p) updateSensors(p); });  // includes speedMs
     subscribe(CHR_SENSORS, (v) => {
-      const parsed: Partial<ReturnType<typeof parseSensors>> = parseSensors(v);
+      const raw = parseSensors(v);
+      if (!raw) return;
+      const parsed: Partial<NonNullable<typeof raw>> = raw;
       // Se il sensore cadenza BLE dedicato è connesso, ignora la cadenza
       // dell'ESP32 (manderebbe 0 a 10 Hz schiacciando il valore reale)
       if (useStore.getState().cadenceSensorStatus === 'connected') {

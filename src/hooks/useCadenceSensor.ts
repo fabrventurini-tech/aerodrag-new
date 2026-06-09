@@ -40,6 +40,12 @@ const SVC_CSC      = '00001816-0000-1000-8000-00805f9b34fb';
 const CHR_CSC_MEAS = '00002a5b-0000-1000-8000-00805f9b34fb';
 const CHR_CSC_FEAT = '00002a5c-0000-1000-8000-00805f9b34fb';
 
+// API a livello modulo (vedi wheelSensorApi): permette agli screen di
+// aggiornare il sensore preferito senza rimontare il hook BLE.
+export const cadenceSensorApi = {
+  setPreferred: (_id: string | null): void => {},
+};
+
 // ── Parsing ───────────────────────────────────────────────────────────────────
 
 function parseCscCrank(b64: string): { cumCrankRevs: number; lastCrankEventTime: number } | null {
@@ -113,6 +119,9 @@ export function useCadenceSensor() {
   // Sync refs per usare i valori aggiornati nei callback BLE
   useEffect(() => { preferredIdRef.current   = cadenceSensorId; }, [cadenceSensorId]);
   useEffect(() => { wheelSensorIdRef.current = wheelSensorId;   }, [wheelSensorId]);
+
+  // Registra il setter nell'API a livello modulo (per SettingsScreen)
+  cadenceSensorApi.setPreferred = (id) => { preferredIdRef.current = id; };
 
   // ── Permessi ───────────────────────────────────────────────────────────────
   async function requestPermissions(): Promise<boolean> {
