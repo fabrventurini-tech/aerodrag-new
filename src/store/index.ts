@@ -143,6 +143,7 @@ interface AeroDragStore {
   sensor:  SensorInput;
   physics: PhysicsOutput;
   history: DataPoint[];
+  lastDevicePhysicsAt: number;  // timestamp ultima fisica ricevuta da 0xaa09
 
   // Sessione
   isRecording:  boolean;
@@ -231,6 +232,7 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   sensor:          EMPTY_SENSOR,
   physics:         EMPTY_PHYSICS,
   history:         [],
+  lastDevicePhysicsAt: 0,
   isRecording:     false,
   elapsed:         0,
   sessionStart:    null,
@@ -429,13 +431,21 @@ export const useStore = create<AeroDragStore>((set, get) => ({
       }
     }
 
-    const physics = computePhysics(next, mass, crr);
-    set({ sensor: next, physics, crrSource, crrActive: crr });
+    // Fisica locale solo come fallback: se l'ESP32 sta notificando la sua
+    // fisica su 0xaa09 (sorgente di verità), non sovrascriverla col ricalcolo
+    // locale — altrimenti il CdA visualizzato flippa tra i due valori.
+    const deviceFresh = Date.now() - get().lastDevicePhysicsAt < 1500;
+    if (deviceFresh) {
+      set({ sensor: next, crrSource, crrActive: crr });
+    } else {
+      const physics = computePhysics(next, mass, crr);
+      set({ sensor: next, physics, crrSource, crrActive: crr });
+    }
   },
 
   // Sovrascrive la fisica con il valore calcolato direttamente dall'ESP32.
   // Chiamato ogni volta che arriva una notifica su CHR_PHYSICS (0xaa09).
-  setPhysicsFromDevice: (p) => set({ physics: p }),
+  setPhysicsFromDevice: (p) => set({ physics: p, lastDevicePhysicsAt: Date.now() }),
 
   tick: () => {
     const { isRecording, sessionStart, sensor, physics, history } = get();
@@ -578,5 +588,5 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   },
 }));
 
-// Re-export Crr types for convenience
-export type { WheelSample, CrrRunResult, CrrCalibResult, CrrCalibMode };
+// Re-export Crr types for convenience (CrrCalibMode è già esportato sopra)
+export type { WheelSample, CrrRunResult, CrrCalibResult };

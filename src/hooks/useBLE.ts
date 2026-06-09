@@ -11,16 +11,17 @@
  *   0000aa05 → Identità device (R/W)          (device_id[18] + athlete_name[32])
  *   0000aa06 → Versione firmware (R)          (stringa ASCII)
  *   0000aa07 → OTA trigger (W)                (URL HTTP del .bin)
- *   0000aa08 → Config parametri (W)           (float32×3: massKg, crr, pitotOffset)
+ *   0000aa08 → Config parametri (W)           (float32×2: massKg, crr — 8 byte)
  *   0000aa09 → Physics output (NOTIFY 10 Hz)  (float32×7: cda, vAir, rho, pctAero, pAero, pRoll, pGrav)
  *   0000aa0a → Batteria (NOTIFY 0.1 Hz)       (uint8: battery_pct 0-100)
  *
  * Note:
  *   - La velocità arriva da 0xaa03[3] come float32 m/s, NON da 0xaa04.
- *   - La batteria NON è esposta via BLE; compare solo nei frame Wi-Fi coach.
  *   - Scrivere il nome atleta su 0xaa05 sincronizza il display e i frame coach.
- *   - 0xaa08 va scritto on-connect e ad ogni cambio di massa/Crr/pitotOffset in app.
- *   - 0xaa09 è la sorgente di verità del CdA — l'ESP32 calcola in autonomia.
+ *   - 0xaa08 va scritto on-connect e ad ogni cambio di massa/Crr in app
+ *     (pitotOffset NON incluso: la calibrazione pitot avviene sul device).
+ *   - 0xaa09 è la sorgente di verità del CdA — l'ESP32 calcola in autonomia;
+ *     il calcolo locale in engine.ts resta solo per sim mode / firmware vecchio.
  */
 
 import { useEffect, useRef } from 'react';

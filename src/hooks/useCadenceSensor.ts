@@ -166,7 +166,7 @@ export function useCadenceSensor() {
   function subscribeAll(device: Device) {
     const sub = device.monitorCharacteristicForService(
       SVC_CSC, CHR_CSC_MEAS,
-      (err: Error | null, c: { value?: string } | null) => {
+      (err: Error | null, c: { value?: string | null } | null) => {
         if (err || !c?.value) return;
         const parsed = parseCscCrank(c.value);
         if (parsed) processCrankData(parsed.cumCrankRevs, parsed.lastCrankEventTime);

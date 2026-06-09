@@ -15,6 +15,7 @@ import {
 } from '../security/pairing';
 import { QRPairScreen } from './QRPairScreen';
 import { CrrCalibrationScreen } from './CrrCalibrationScreen';
+import { wheelSensorApi } from '../hooks/useWheelSensor';
 import { Colors, Sp, Radius } from '../theme';
 
 export function SettingsScreen() {
@@ -263,7 +264,7 @@ export function SettingsScreen() {
       <CrrCalibrationScreen
         visible={showCrrCalib}
         onClose={() => setShowCrrCalib(false)}
-        sendCommand={async () => true}
+        sendCommand={(cmd) => wheelSensorApi.sendCommand(cmd)}
       />
 
       {/* ── Sensore Cadenza ── */}

@@ -58,6 +58,14 @@ export const WHEEL_CMD = {
   CANCEL:          0xff,
 } as const;
 
+// API a livello modulo: il hook (montato una sola volta in App.tsx) registra
+// qui le funzioni reali, così gli screen (es. SettingsScreen) possono inviare
+// comandi al sensore senza rimontare il hook BLE.
+export const wheelSensorApi = {
+  sendCommand: async (_cmd: number): Promise<boolean> => false,
+  writeConfig: async (_tireCircM: number, _massKg: number): Promise<boolean> => false,
+};
+
 // ── Parsing pacchetti ─────────────────────────────────────────────────────────
 
 function parseStream(b64: string) {
@@ -141,7 +149,7 @@ export function useWheelSensor() {
     const sub = (chr: string, handler: (v: string) => void) => {
       const s = device.monitorCharacteristicForService(
         SVC_WHEEL, chr,
-        (err: Error | null, c: { value?: string } | null) => { if (!err && c?.value) handler(c.value); }
+        (err: Error | null, c: { value?: string | null } | null) => { if (!err && c?.value) handler(c.value); }
       );
       subs.current.push(s);
     };
@@ -167,9 +175,13 @@ export function useWheelSensor() {
         fallbackTimeoutRef.current = null;
       }
 
-      // Sincronizza configurazione (circonferenza pneumatico e massa) col firmware
-      const { calib: cfg } = useStore.getState();
-      writeConfig(cfg.tireCircM, cfg.massRiderKg + cfg.massBikeKg).catch(() => {});
+      // Sincronizza configurazione (circonferenza pneumatico e massa) col firmware.
+      // Usa la massa del profilo atleta attivo se presente — coerente con l'ESP32.
+      const st = useStore.getState();
+      const activeProfile = st.athleteProfiles.find((p) => p.id === st.activeAthleteId);
+      const massKg = (activeProfile?.massRiderKg ?? st.calib.massRiderKg)
+                   + (activeProfile?.massBikeKg  ?? st.calib.massBikeKg);
+      writeConfig(st.calib.tireCircM, massKg).catch(() => {});
 
       // Salva nella lista dei sensori noti e imposta come attivo
       // (operazione idempotente: aggiorna se già presente)
@@ -336,6 +348,10 @@ export function useWheelSensor() {
       scanStartedRef.current = false;
     };
   }, [isSimMode]);
+
+  // Registra le funzioni reali nell'API a livello modulo (per gli screen)
+  wheelSensorApi.sendCommand = sendCommand;
+  wheelSensorApi.writeConfig = writeConfig;
 
   return { sendCommand, writeConfig };
 }
