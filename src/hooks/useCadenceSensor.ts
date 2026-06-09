@@ -81,6 +81,7 @@ export function useCadenceSensor() {
   const wheelSensorIdRef   = useRef<string | null>(null);
   const scanStartedRef     = useRef(false);
   const rejectedIdsRef     = useRef<Set<string>>(new Set());
+  const fallbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Stato cadenza (refs per closure nei callback BLE)
   const prevCrankRevRef    = useRef(-1);
@@ -202,6 +203,12 @@ export function useCadenceSensor() {
       setCadenceSensorStatus('connected');
       prevCrankRevRef.current = -1; // reset stato cadenza
 
+      // Cancella il fallback timeout: connesso prima degli 8s
+      if (fallbackTimeoutRef.current) {
+        clearTimeout(fallbackTimeoutRef.current);
+        fallbackTimeoutRef.current = null;
+      }
+
       subscribeAll(connected);
 
       const name = device.name ?? `Cadence ${device.id.slice(-5)}`;
@@ -250,7 +257,8 @@ export function useCadenceSensor() {
 
     // Fallback: se il preferito non risponde in 8 s, accetta qualsiasi CSC
     if (preferredIdRef.current) {
-      setTimeout(() => {
+      fallbackTimeoutRef.current = setTimeout(() => {
+        fallbackTimeoutRef.current = null;
         if (!deviceRef.current && scanStartedRef.current) {
           manager.current?.stopDeviceScan();
           scanStartedRef.current = false;
@@ -306,6 +314,10 @@ export function useCadenceSensor() {
       disconnectSub.current?.remove();
       disconnectSub.current = null;
       if (cadenceTimeoutRef.current) clearTimeout(cadenceTimeoutRef.current);
+      if (fallbackTimeoutRef.current) {
+        clearTimeout(fallbackTimeoutRef.current);
+        fallbackTimeoutRef.current = null;
+      }
       manager.current?.destroy();
       manager.current = null;
       scanStartedRef.current = false;

@@ -395,7 +395,7 @@ function CoastPhase({ speedKmh, accelMs2, vibRMS, elapsed, maxS, samples, pulseA
           <View style={[styles.progressFill, { width: `${pct * 100}%` as any, backgroundColor: Colors.amber }]} />
         </View>
 
-        <Text style={styles.coastHint}>Il run si ferma automaticamente a 2 km/h</Text>
+        <Text style={styles.coastHint}>Il run si ferma automaticamente a 7 km/h (2 m/s)</Text>
 
         <TouchableOpacity style={[styles.primaryBtn, { backgroundColor: Colors.redBg, borderColor: Colors.red }]} onPress={onStop}>
           <Text style={[styles.primaryBtnText, { color: Colors.red }]}>Ferma manualmente</Text>

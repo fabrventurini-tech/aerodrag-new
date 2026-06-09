@@ -1,161 +1,42 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
   TextInput, TouchableOpacity,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useStore } from '../store';
+import { coachConnect, coachDisconnect, loadCoachUrl, saveCoachUrl } from '../coach/link';
 import { Colors, Sp, Radius } from '../theme';
 
-const KEY_COACH_URL = 'aerodrag:coach_url';
-
+// La connessione WebSocket vive in src/coach/link.ts a livello modulo:
+// sopravvive al cambio di tab. Questa schermata è solo UI.
 export function CoachScreen() {
-  const [url, setUrl]       = useState('');
-  const [saved, setSaved]   = useState('');
-  const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
-  const [errorMsg, setErrorMsg] = useState('');
-
-  const wsRef         = useRef<WebSocket | null>(null);
-  const reconnectRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sendRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [url, setUrl]     = useState('');
+  const [saved, setSaved] = useState('');
 
   const {
     physics, sensor, history, isRecording,
     activeAthleteId, athleteProfiles,
-    pairedDeviceId, batteryPct, currentLap,
-    startSession, stopSession, addLap,
+    batteryPct, currentLap,
+    coachStatus: status, coachErrorMsg: errorMsg,
   } = useStore();
 
-  // Ricarica URL salvato
+  // Mostra l'URL salvato (la connessione parte già da App via coachAutoConnect)
   useEffect(() => {
-    AsyncStorage.getItem(KEY_COACH_URL).then((u) => {
-      if (u) { setUrl(u); setSaved(u); connect(u); }
+    loadCoachUrl().then((u) => {
+      if (u) { setUrl(u); setSaved(u); }
     });
-    return () => disconnect();
   }, []);
-
-  // Re-invia hello quando i profili atleta sono caricati dopo la connessione WS.
-  // Risolve il race condition: ws.onopen spara prima che loadAthleteProfiles() finisca.
-  useEffect(() => {
-    if (status !== 'connected' || !wsRef.current) return;
-    if (wsRef.current.readyState !== WebSocket.OPEN) return;
-    const profile = athleteProfiles.find((p) => p.id === activeAthleteId);
-    if (!profile) return;
-    wsRef.current.send(JSON.stringify({
-      type:    'hello',
-      device:  pairedDeviceId ?? 'unknown',
-      athlete: profile.name,
-    }));
-  }, [activeAthleteId, athleteProfiles, status]);
-
-  function disconnect() {
-    if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null; }
-    if (sendRef.current)      { clearInterval(sendRef.current);    sendRef.current = null; }
-    if (wsRef.current) {
-      wsRef.current.onclose = null;
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-  }
-
-  function connect(targetUrl: string) {
-    disconnect();
-    if (!targetUrl.startsWith('ws://') && !targetUrl.startsWith('wss://')) {
-      setStatus('error');
-      setErrorMsg('URL deve iniziare con ws:// o wss://');
-      return;
-    }
-    setStatus('connecting');
-    setErrorMsg('');
-    try {
-      const ws = new WebSocket(targetUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setStatus('connected');
-
-        // Fix: invia hello con MAC BLE e nome atleta per identificazione sul Pi
-        const state = useStore.getState();
-        const activeProfile = state.athleteProfiles.find(
-          (p) => p.id === state.activeAthleteId
-        );
-        ws.send(JSON.stringify({
-          type:    'hello',
-          device:  state.pairedDeviceId ?? 'unknown',
-          athlete: activeProfile?.name ?? 'Atleta',
-        }));
-
-        // Fix: invia frame nel formato flat atteso dal Pi a 2 Hz
-        sendRef.current = setInterval(() => {
-          if (ws.readyState !== WebSocket.OPEN) return;
-          const {
-            physics: p, sensor: s, batteryPct: bat,
-            currentLap: lap, pairedDeviceId: devId,
-            activeAthleteId: aid, athleteProfiles: profiles,
-          } = useStore.getState();
-
-          if (!p.valid) return;
-
-          const athleteName = profiles.find((x) => x.id === aid)?.name ?? 'Atleta';
-          // vento = velocità aria relativa − velocità a terra (componente frontale)
-          const wind = Math.max(0, +(p.vAirMs - s.speedMs).toFixed(2));
-
-          ws.send(JSON.stringify({
-            t:       Date.now(),
-            device:  devId ?? 'unknown',
-            athlete: athleteName,
-            lap,
-            CdA:     +p.cda.toFixed(4),
-            pwr:     Math.round(s.powerW),
-            spd:     +(s.speedMs * 3.6).toFixed(1),   // m/s → km/h
-            hr:      s.hrBpm,
-            cad:     s.cadenceRpm,
-            wind,
-            battery: bat,
-            pctAero: +p.pctAero.toFixed(1),
-          }));
-        }, 500);
-      };
-
-      // Fix: gestisce comandi START / STOP / LAP inviati dal coach
-      ws.onmessage = (e) => {
-        try {
-          const msg = JSON.parse(e.data);
-          if (msg.type === 'cmd') {
-            if      (msg.action === 'start') useStore.getState().startSession();
-            else if (msg.action === 'stop')  useStore.getState().stopSession();
-            else if (msg.action === 'lap')   useStore.getState().addLap();
-          }
-        } catch {}
-      };
-
-      ws.onerror = () => {
-        setStatus('error');
-        setErrorMsg('Errore di connessione');
-      };
-
-      ws.onclose = () => {
-        if (sendRef.current) { clearInterval(sendRef.current); sendRef.current = null; }
-        setStatus('error');
-        reconnectRef.current = setTimeout(() => connect(targetUrl), 5000);
-      };
-    } catch (e: any) {
-      setStatus('error');
-      setErrorMsg(String(e?.message ?? e));
-    }
-  }
 
   async function handleSave() {
     const trimmed = url.trim();
     if (!trimmed) return;
     setSaved(trimmed);
-    await AsyncStorage.setItem(KEY_COACH_URL, trimmed);
-    connect(trimmed);
+    await saveCoachUrl(trimmed);
+    coachConnect(trimmed);
   }
 
   function handleDisconnect() {
-    disconnect();
-    setStatus('idle');
+    coachDisconnect();
   }
 
   const lastCda = history.length > 0
@@ -244,7 +125,8 @@ export function CoachScreen() {
       </View>
 
       <Text style={styles.note}>
-        Dati inviati a 2 Hz via WebSocket.
+        Dati inviati a 2 Hz via WebSocket. La connessione resta attiva anche
+        cambiando schermata.
         {isRecording ? '  •  Sessione in registrazione' : ''}
         {'\n'}Batteria: {batteryPct > 0 ? `${batteryPct}%` : '—'}
       </Text>

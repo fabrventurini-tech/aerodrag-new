@@ -253,11 +253,15 @@ export function SettingsScreen() {
           </View>
         )}
 
+        {/* Apribile anche senza sensore: mostra lo storico; i protocolli
+            restano disabilitati finché il sensore non è connesso */}
         <TouchableOpacity
-          style={[styles.primaryBtn, !wheelConnected && styles.btnDisabled]}
+          style={styles.primaryBtn}
           onPress={() => setShowCrrCalib(true)}
         >
-          <Text style={styles.primaryBtnText}>Calibra Crr</Text>
+          <Text style={styles.primaryBtnText}>
+            {wheelConnected ? 'Calibra Crr' : 'Calibrazione Crr (storico)'}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -392,6 +396,11 @@ export function SettingsScreen() {
           max={10}
           onChange={(v) => setCalib({ pitotOffset: v })}
         />
+        <Text style={styles.hint}>
+          L'offset Pitot agisce solo sul calcolo locale di fallback (sim mode
+          o firmware senza 0xaa09). La calibrazione zero-punto reale avviene
+          sul device ESP32.
+        </Text>
       </View>
 
       {/* ── Modalità simulazione ── */}

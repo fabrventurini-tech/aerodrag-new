@@ -7,6 +7,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useBLE } from './src/hooks/useBLE';
 import { useWheelSensor } from './src/hooks/useWheelSensor';
 import { useCadenceSensor } from './src/hooks/useCadenceSensor';
+import { coachAutoConnect } from './src/coach/link';
 import { useStore } from './src/store';
 import { NavBar, Screen } from './src/components';
 
@@ -96,6 +97,7 @@ export default function App() {
     loadPreviousSessions();
     loadPairedDeviceId();
     useStore.getState().loadCrrHistory();
+    coachAutoConnect();  // riconnette alla dashboard coach se un URL era salvato
   }, []);
 
   return (

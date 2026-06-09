@@ -128,6 +128,10 @@ interface AeroDragStore {
   cadenceSensorStatus: 'idle' | 'scanning' | 'connecting' | 'connected' | 'error';
   cadenceSensorId:     string | null;
 
+  // Stato connessione dashboard coach (gestita da src/coach/link.ts)
+  coachStatus:   'idle' | 'connecting' | 'connected' | 'error';
+  coachErrorMsg: string;
+
   // Calibrazione Crr
   crrCalib: CrrCalibState;
 
@@ -176,6 +180,9 @@ interface AeroDragStore {
   // Actions BLE sensore cadenza
   setCadenceSensorStatus: (s: AeroDragStore['cadenceSensorStatus']) => void;
   setCadenceSensorId:     (id: string | null) => void;
+
+  // Actions coach
+  setCoachStatus: (s: AeroDragStore['coachStatus'], err?: string) => void;
 
   // Actions calibrazione Crr
   startCrrCalib:    (protocol: 'indoor' | 'outdoor') => void;
@@ -226,6 +233,8 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   wheelStream:         { speedMs: 0, accelMs2: 0, tempC: 20, vibRMS: 0 },
   cadenceSensorStatus: 'idle',
   cadenceSensorId:     null,
+  coachStatus:         'idle',
+  coachErrorMsg:       '',
   crrCalib:          DEFAULT_CRR_CALIB,
   crrSource:         'default',
   crrActive:         DEFAULT_CALIB.crr,
@@ -257,6 +266,9 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   // ── BLE sensore cadenza ────────────────────────────────────────────────────
   setCadenceSensorStatus: (s) => set({ cadenceSensorStatus: s }),
   setCadenceSensorId:     (id) => set({ cadenceSensorId: id }),
+
+  // ── Coach ──────────────────────────────────────────────────────────────────
+  setCoachStatus: (s, err) => set({ coachStatus: s, coachErrorMsg: err ?? '' }),
   updateWheelStream:    (s) => {
     set({ wheelStream: s });
     // Accumula campioni se è in corso un run di calibrazione
@@ -321,9 +333,13 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   },
 
   finalizeCrrRun: () => {
-    const { crrCalib, calib, physics } = get();
+    const { crrCalib, calib, physics, athleteProfiles, activeAthleteId } = get();
+    // Stessa massa inviata ai device: profilo atleta attivo se presente
+    const activeProfile = athleteProfiles.find((p) => p.id === activeAthleteId);
+    const massKg = (activeProfile?.massRiderKg ?? calib.massRiderKg)
+                 + (activeProfile?.massBikeKg  ?? calib.massBikeKg);
     const params = {
-      massKg:     calib.massRiderKg + calib.massBikeKg,
+      massKg,
       rhoKgM3:    physics.rhoKgM3 || 1.225,
       cdaM2:      physics.cda || 0,
       slopeDeg:   0,

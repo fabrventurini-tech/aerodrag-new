@@ -10,6 +10,12 @@ function generateId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+// La tastiera decimal-pad italiana inserisce la virgola: parseFloat("72,5")
+// darebbe 72 troncando i decimali in silenzio. Normalizza prima del parse.
+function parseDecimal(s: string): number {
+  return parseFloat(s.replace(',', '.'));
+}
+
 export function AthletesScreen() {
   const {
     athleteProfiles, activeAthleteId,
@@ -40,14 +46,14 @@ export function AthletesScreen() {
 
   async function handleSave() {
     if (!editing || !name.trim()) return;
-    const riderKg = parseFloat(massRider) || 70;
-    const bikeKg  = parseFloat(massBike)  || 8;
+    const riderKg = parseDecimal(massRider) || 70;
+    const bikeKg  = parseDecimal(massBike)  || 8;
     const profile: AthleteProfile = {
       id:          editing.id,
       name:        name.trim(),
       massRiderKg: riderKg,
       massBikeKg:  bikeKg,
-      crr:         parseFloat(crr) || 0.004,
+      crr:         parseDecimal(crr) || 0.004,
     };
     await saveAthleteProfile(profile);
     setEditing(null);

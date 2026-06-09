@@ -160,7 +160,15 @@ export function useBLE() {
     subscribe(CHR_PITOT,   (v) => updateSensors(parsePitot(v)));
     subscribe(CHR_IMU,     (v) => updateSensors(parseIMU(v)));
     subscribe(CHR_ENV,     (v) => updateSensors(parseEnv(v)));   // includes speedMs
-    subscribe(CHR_SENSORS, (v) => updateSensors(parseSensors(v)));
+    subscribe(CHR_SENSORS, (v) => {
+      const parsed: Partial<ReturnType<typeof parseSensors>> = parseSensors(v);
+      // Se il sensore cadenza BLE dedicato è connesso, ignora la cadenza
+      // dell'ESP32 (manderebbe 0 a 10 Hz schiacciando il valore reale)
+      if (useStore.getState().cadenceSensorStatus === 'connected') {
+        delete parsed.cadenceRpm;
+      }
+      updateSensors(parsed);
+    });
     // CHR_PHYSICS (0xaa09): fisica calcolata dall'ESP32 — sorgente di verità del CdA
     subscribe(CHR_PHYSICS, (v) => {
       const p = parsePhysics(v);
