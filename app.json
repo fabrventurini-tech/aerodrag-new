@@ -11,7 +11,10 @@
         "react-native-ble-plx",
         {
           "isBackgroundEnabled": true,
-          "modes": ["peripheral", "central"],
+          "modes": [
+            "peripheral",
+            "central"
+          ],
           "bluetoothAlwaysPermission": "Consenti ad AeroDrag di connettersi al sensore"
         }
       ],
@@ -47,13 +50,21 @@
       "bundleIdentifier": "com.aerodrag.app",
       "supportsTablet": false,
       "infoPlist": {
-        "UIBackgroundModes": ["bluetooth-central"]
+        "UIBackgroundModes": [
+          "bluetooth-central"
+        ]
       }
     },
     "extra": {
       "eas": {
         "projectId": "dc2790fe-8922-42b4-bc1b-45f8f4a5b703"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/dc2790fe-8922-42b4-bc1b-45f8f4a5b703"
     }
   }
 }
