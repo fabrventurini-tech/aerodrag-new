@@ -114,6 +114,19 @@ function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
 }
 
+// Tronca una stringa a maxBytes UTF-8 SENZA spezzare un carattere multibyte:
+// un byte orfano (≥ 0x80) passerebbe la sanitizzazione del firmware e
+// finirebbe come UTF-8 invalido nel JSON dei frame WebSocket verso il Pi.
+function utf8Truncate(s: string, maxBytes: number): Buffer {
+  const buf = Buffer.from(s, 'utf8');
+  if (buf.length <= maxBytes) return buf;
+  let end = maxBytes;
+  // Arretra finché punta a un continuation byte (10xxxxxx): il carattere
+  // a cavallo del limite viene escluso per intero
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
+  return buf.slice(0, end);
+}
+
 // ── Hook principale ───────────────────────────────────────────────────────────
 
 export function useBLE() {
@@ -140,9 +153,8 @@ export function useBLE() {
     if (!deviceRef.current) return;
     const profile = athleteProfiles.find((p) => p.id === activeAthleteId);
     if (!profile?.name) return;
-    // Troncamento per byte: nomi con accenti (es. "Niccolò") superano
-    // i 31 byte anche sotto i 31 caratteri
-    const nameBytes = Buffer.from(profile.name, 'utf8').slice(0, 31);
+    // Troncamento a 31 byte al confine di carattere UTF-8
+    const nameBytes = utf8Truncate(profile.name, 31);
     deviceRef.current.writeCharacteristicWithResponseForService(
       SVC, CHR_IDENTITY, nameBytes.toString('base64')
     ).catch(() => {});
@@ -273,8 +285,8 @@ export function useBLE() {
       const athleteName   = activeProfile?.name ?? '';
       if (athleteName) {
         try {
-          // Troncamento per byte (non per caratteri): il firmware accetta 1-31 byte
-          const nameBytes = Buffer.from(athleteName, 'utf8').slice(0, 31);
+          // Troncamento a 31 byte al confine di carattere UTF-8
+          const nameBytes = utf8Truncate(athleteName, 31);
           await connected.writeCharacteristicWithResponseForService(
             SVC, CHR_IDENTITY, nameBytes.toString('base64')
           );
