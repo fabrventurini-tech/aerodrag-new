@@ -5,15 +5,15 @@
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "buffer": "^6.0.3",
-    "expo": "~56.0.9",
-    "expo-camera": "~56.0.7",
-    "expo-file-system": "~56.0.7",
+    "expo": "~56.0.11",
+    "expo-camera": "~56.0.8",
+    "expo-file-system": "~56.0.8",
     "expo-haptics": "~56.0.3",
     "expo-keep-awake": "~56.0.3",
-    "expo-location": "~56.0.16",
-    "expo-sharing": "~56.0.16",
+    "expo-location": "~56.0.17",
+    "expo-sharing": "~56.0.17",
     "expo-status-bar": "~56.0.4",
-    "expo-updates": "~56.0.18",
+    "expo-updates": "~56.0.19",
     "react": "19.2.3",
     "react-native": "0.85.3",
     "react-native-ble-plx": "^3.5.1",
@@ -26,6 +26,18 @@
   "devDependencies": {
     "@types/react": "~19.2.2",
     "typescript": "~6.0.3"
+  },
+  "expo": {
+    "install": {
+      "exclude": [
+        "expo",
+        "expo-camera",
+        "expo-file-system",
+        "expo-location",
+        "expo-sharing",
+        "expo-updates"
+      ]
+    }
   },
   "scripts": {
     "start": "expo start",
