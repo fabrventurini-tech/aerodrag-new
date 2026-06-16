@@ -10,7 +10,8 @@
  * Protocollo (vedi review dashboard):
  *   App → Pi  hello:  { type:'hello', device, athlete }
  *   App → Pi  data:   { t, device, athlete, lap, CdA, pwr, spd, hr, cad,
- *                       wind, battery, pctAero }  @ 2 Hz, solo se physics.valid
+ *                       wind, battery, pctAero, pitch, rho, lapEvent }
+ *                     @ 2 Hz, solo se physics.valid  (contract v0.1.0)
  *   Pi → App  cmd:    { type:'cmd', action:'start'|'stop'|'lap' }
  */
 
@@ -26,6 +27,7 @@ let sendTimer: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let storeUnsub: (() => void) | null = null;
 let manualDisconnect = false;
+let prevLapSent = 0;   // per emettere lapEvent una sola volta al cambio giro
 
 export async function loadCoachUrl(): Promise<string | null> {
   try {
@@ -59,6 +61,8 @@ function sendHello(): void {
 
 function startDataLoop(): void {
   if (sendTimer) clearInterval(sendTimer);
+  // Allinea il marker al giro corrente: nessun lapEvent spurio al (ri)connect
+  prevLapSent = useStore.getState().currentLap;
   sendTimer = setInterval(() => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const {
@@ -72,20 +76,27 @@ function startDataLoop(): void {
     const athleteName = profiles.find((x) => x.id === aid)?.name ?? 'Atleta';
     // vento = velocità aria relativa − velocità a terra (componente frontale)
     const wind = Math.max(0, +(p.vAirMs - s.speedMs).toFixed(2));
+    // lapEvent: true solo sul primo frame dopo un cambio giro (il Pi lo usa
+    // come marker di giro). prevLapSent traccia l'ultimo giro notificato.
+    const lapEvent = lap !== prevLapSent;
+    prevLapSent = lap;
 
     ws.send(JSON.stringify({
-      t:       Date.now(),
-      device:  devId ?? 'unknown',
-      athlete: athleteName,
+      t:        Date.now(),
+      device:   devId ?? 'unknown',
+      athlete:  athleteName,
       lap,
-      CdA:     +p.cda.toFixed(4),
-      pwr:     Math.round(s.powerW),
-      spd:     +(s.speedMs * 3.6).toFixed(1),   // m/s → km/h
-      hr:      s.hrBpm,
-      cad:     s.cadenceRpm,
+      CdA:      +p.cda.toFixed(4),
+      pwr:      Math.round(s.powerW),
+      spd:      +(s.speedMs * 3.6).toFixed(1),   // m/s → km/h
+      hr:       s.hrBpm,
+      cad:      s.cadenceRpm,
       wind,
-      battery: bat,
-      pctAero: +p.pctAero.toFixed(1),
+      battery:  bat,
+      pctAero:  +p.pctAero.toFixed(1),
+      pitch:    +s.pitchDeg.toFixed(1),          // contract v0.1.0
+      rho:      +p.rhoKgM3.toFixed(4),           // contract v0.1.0
+      lapEvent,                                  // contract v0.1.0
     }));
   }, SEND_INTERVAL_MS);
 }

@@ -16,7 +16,7 @@
  *   0xaa08 CONFIG   R+W             12 B:  float mass_kg + float crr + float wheel_circ_m
  *          range firmware: mass ∈ [33,200], crr ∈ [0.001,0.025], wheel ∈ [1.0,2.5]
  *          fuori range → errore ATT e nessun campo scritto (clampare prima!)
- *   0xaa09 PHYSICS  NOTIFY 10 Hz    28 B:  float×7 cda, vAir, rho, pctAero(0-1), pAero, pRoll, pGrav
+ *   0xaa09 PHYSICS  NOTIFY 10 Hz    28 B:  float×7 cda, vAir, rho, pctAero(0-100), pAero, pRoll, pGrav
  *          tutti 0 se misura non valida
  *   0xaa0a BATTERY  NOTIFY 0.1 Hz    1 B:  uint8 pct 0-100
  *
@@ -102,7 +102,7 @@ function parsePhysics(b64: string): PhysicsOutput | null {
     cda,
     vAirMs,
     rhoKgM3:   buf.readFloatLE(8),
-    pctAero:   buf.readFloatLE(12) * 100,  // firmware invia 0.0-1.0, app usa 0-100
+    pctAero:   buf.readFloatLE(12),        // contract v0.1.0: percentuale 0-100
     pAeroW:    buf.readFloatLE(16),
     pRollingW: buf.readFloatLE(20),
     pGravityW: buf.readFloatLE(24),
