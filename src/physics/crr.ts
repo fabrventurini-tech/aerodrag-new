@@ -15,7 +15,7 @@
  *   - vibRMS   : energia vibrazioni 2-20 Hz (m/s²) — indicatore qualità superficie
  */
 
-const G = 9.81;
+const G = 9.80665;   // costante canonica (contract v0.1.0 §6, physics.h)
 
 // ── Tipi pubblici ─────────────────────────────────────────────────────────────
 

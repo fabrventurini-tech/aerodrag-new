@@ -1,10 +1,24 @@
 /**
- * AeroDrag Physics Engine
- * Calcola CdA, potenza aerodinamica e breakdown delle resistenze.
+ * AeroDrag Physics Engine — SOLO fallback/sim.
  *
- * Formula centrale:
- *   P_aero = 0.5 * rho * CdA * v_aria^3
- *   CdA = (P_tot - P_rolling - P_gravity - P_accel) / (0.5 * rho * v_aria^3)
+ * La sorgente di verità del CdA è il firmware (BLE 0xaa09): quando il device
+ * notifica la sua fisica, lo store la usa direttamente. Questo modulo entra in
+ * gioco solo in sim mode o con firmware legacy che non espone 0xaa09.
+ *
+ * Per garantire che il display dell'app coincida con quello del device anche
+ * nel fallback, queste formule replicano fedelmente il modello CANONICO
+ * `aerodrag-firmware/components/pitot/physics.h` (contract v0.1.0 §6):
+ *
+ *   rho     = f(tempC, humidityPct, altM)            # ISO 2533 + Magnus
+ *   v_air   = sqrt(2 · max(0, pitot − offset) / rho) # offset applicato a monte
+ *   p_roll  = crr · mass · g · v_ground
+ *   p_grav  = mass · g · sin(pitch) · v_ground
+ *   p_mech  = power · (1 − MECH_EFF)                 # MECH_EFF = 0.975
+ *   p_aero  = max(0, power − p_roll − p_grav − p_mech)
+ *   CdA     = p_aero / (0.5 · rho · v_air³)          # solo se v_air³>1 e power>20 W
+ *   pctAero = clamp(p_aero / power · 100, 0, 100)
+ *
+ * Costanti canoniche: g = 9.80665, RHO_STD = 1.225, CdA valido in [0.10, 0.60].
  */
 
 export interface SensorInput {
@@ -32,29 +46,36 @@ export interface PhysicsOutput {
   valid:       boolean;
 }
 
-const G = 9.81;
-const R_AIR = 287.058;   // costante gas secco [J/(kg·K)]
-const Rv    = 461.495;   // costante vapor acqua [J/(kg·K)]
+// Costanti canoniche da physics.h (§6)
+const G        = 9.80665;   // GRAVITY_MS2 [m/s²]
+const R_AIR    = 287.058;   // costante gas secco [J/(kg·K)]
+const MECH_EFF = 0.975;     // efficienza trasmissione
+const RHO_STD  = 1.225;     // densità aria standard [kg/m³]
 
-/**
- * Calcola densità aria tenendo conto di temperatura, pressione e umidità.
- */
-function airDensity(tempC: number, staticPa: number, humidity: number): number {
-  const T = tempC + 273.15;
-  // Pressione vapor saturo (Magnus formula)
-  const pSat = 610.78 * Math.exp((17.27 * tempC) / (tempC + 237.3));
-  const pV   = humidity * pSat;
-  const pD   = staticPa - pV;
-  return (pD / (R_AIR * T)) + (pV / (Rv * T));
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
 }
 
 /**
- * Velocità aria dal tubo Pitot.
- * v = sqrt(2 * deltaP / rho)
+ * Densità aria ρ = f(T, RH, altitudine) — ISO 2533 semplificata + Magnus.
+ * Replica `physics_calc_rho` di physics.h: barometrica dall'altitudine
+ * (la statica misurata NON è usata, come sul device), con clamp degli input
+ * e sanity finale su rho.
  */
-function pitotVelocity(pitotPa: number, rho: number): number {
-  if (pitotPa <= 0 || rho <= 0) return 0;
-  return Math.sqrt((2 * pitotPa) / rho);
+function airDensity(tempC: number, humidity: number, altM: number): number {
+  // Clamp input (evita NaN/negativi dalla formula di Magnus)
+  const t   = clamp(tempC, -40, 60);
+  const rh  = clamp(humidity * 100, 0, 100);   // SensorInput.humidity è [0-1]
+  const alt = clamp(altM, 0, 5000);
+
+  const T  = t + 273.15;
+  const p0 = 101325;
+  const p  = p0 * Math.exp((-0.0289644 * G * alt) / (8.31447 * T));
+  const es = 610.78 * Math.exp((17.27 * t) / (t + 237.3));
+  const pv = (rh / 100) * es;
+  const rho = (p - 0.378 * pv) / (R_AIR * T);
+  // Sanity: fuori range → densità standard
+  return rho > 0.8 && rho < 1.5 ? rho : RHO_STD;
 }
 
 export function computePhysics(
@@ -68,32 +89,41 @@ export function computePhysics(
     vAirMs: 0, rhoKgM3: 0, pctAero: 0, valid: false,
   };
 
-  if (s.powerW <= 0 || s.speedMs <= 0) return INVALID;
+  // Densità aria (barometrica da altitudine, come sul device); sanity clamp
+  // finale a [0.8, 1.4] come in physics_compute
+  let rho = airDensity(s.tempC, s.humidity, s.altM);
+  if (rho < 0.8 || rho > 1.4) rho = RHO_STD;
 
-  const rho    = airDensity(s.tempC, s.staticPa, s.humidity);
-  const vAir   = pitotVelocity(s.pitotPa, rho);
-  const slope  = Math.sin((s.pitchDeg * Math.PI) / 180);
+  // Pitot: v_air = sqrt(2·ΔP/ρ). L'offset Pitot è già applicato a monte
+  // (store.updateSensors), qui ci limitiamo a scartare i valori negativi.
+  const dp   = Math.max(0, s.pitotPa);
+  const vAir = Math.sqrt((2 * dp) / rho);
 
-  if (rho <= 0 || vAir <= 0.5) return INVALID;
-
+  const slope    = Math.sin((s.pitchDeg * Math.PI) / 180);
   const pRolling = crr * mass * G * s.speedMs;
   const pGravity = mass * G * slope * s.speedMs;
-  const pAero    = Math.max(s.powerW - pRolling - pGravity, 0);
+  const pMech    = s.powerW * (1 - MECH_EFF);
+  const pAero    = Math.max(0, s.powerW - pRolling - pGravity - pMech);
 
-  const denominator = 0.5 * rho * Math.pow(vAir, 3);
-  if (denominator <= 0) return INVALID;
+  // CdA solo con flusso d'aria e potenza significativi (gate canonico)
+  const v3  = vAir * vAir * vAir;
+  const cda = v3 > 1 && s.powerW > 20 ? pAero / (0.5 * rho * v3) : 0;
 
-  const cda     = pAero / denominator;
-  const pctAero = s.powerW > 0 ? (pAero / s.powerW) * 100 : 0;
+  // Sanity device: CdA fuori [0.10, 0.60] → misura non valida (il device
+  // azzera l'output; l'app lo tratta come fisica assente)
+  if (cda < 0.1 || cda > 0.6) return INVALID;
+
+  // pctAero come sul device: percentuale intera 0–100 (uint8)
+  const pctAero = s.powerW > 0 ? Math.floor(clamp((pAero / s.powerW) * 100, 0, 100)) : 0;
 
   return {
-    cda:       Math.max(0, Math.min(cda, 1.5)),
+    cda,
     pAeroW:    pAero,
     pRollingW: pRolling,
     pGravityW: pGravity,
     vAirMs:    vAir,
     rhoKgM3:   rho,
-    pctAero:   Math.max(0, Math.min(pctAero, 100)),
+    pctAero,
     valid:     true,
   };
 }
