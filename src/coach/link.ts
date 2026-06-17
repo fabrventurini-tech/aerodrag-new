@@ -13,10 +13,16 @@
  *                       wind, battery, pctAero, pitch, rho, lapEvent }
  *                     @ 2 Hz, solo se physics.valid  (contract v0.1.0)
  *   Pi → App  cmd:    { type:'cmd', action:'start'|'stop'|'lap' }
+ *
+ * Identità (contract v0.1.2 §3): il campo `device` è OBBLIGATORIO e DEVE essere
+ * un MAC valido. Il Pi rifiuta all'ingestione i frame senza `device` valido
+ * (nessuna sessione anonima), quindi l'app NON invia né `hello` né frame finché
+ * non è accoppiata a un device con MAC valido (il pairing QR fornisce il MAC).
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useStore } from '../store';
+import { isValidMAC } from '../security/pairing';
 
 const KEY_COACH_URL = 'aerodrag:coach_url';
 const SEND_INTERVAL_MS = 500;   // 2 Hz
@@ -51,10 +57,14 @@ export function coachAutoConnect(): void {
 function sendHello(): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const state = useStore.getState();
+  // contract v0.1.2 §3: senza un `device` MAC valido il Pi rifiuta i frame →
+  // non annunciamo l'identità finché il pairing non fornisce un MAC.
+  const device = state.pairedDeviceId;
+  if (!device || !isValidMAC(device)) return;
   const profile = state.athleteProfiles.find((p) => p.id === state.activeAthleteId);
   ws.send(JSON.stringify({
     type:    'hello',
-    device:  state.pairedDeviceId ?? 'unknown',
+    device,
     athlete: profile?.name ?? 'Atleta',
   }));
 }
@@ -72,6 +82,10 @@ function startDataLoop(): void {
     } = useStore.getState();
 
     if (!p.valid) return;
+    // contract v0.1.2 §3: `device` deve essere un MAC valido, altrimenti il Pi
+    // scarta il frame all'ingestione (nessuna sessione anonima). In sim mode /
+    // app non accoppiata non c'è identità → non si invia.
+    if (!devId || !isValidMAC(devId)) return;
 
     const athleteName = profiles.find((x) => x.id === aid)?.name ?? 'Atleta';
     // vento = velocità aria relativa − velocità a terra (componente frontale)
@@ -83,7 +97,7 @@ function startDataLoop(): void {
 
     ws.send(JSON.stringify({
       t:        Date.now(),
-      device:   devId ?? 'unknown',
+      device:   devId,
       athlete:  athleteName,
       lap,
       CdA:      +p.cda.toFixed(4),

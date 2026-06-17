@@ -287,6 +287,6 @@ export function parseDeviceQR(qrData: string): PairedDevice | null {
   }
 }
 
-function isValidMAC(mac: string): boolean {
+export function isValidMAC(mac: string): boolean {
   return /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(mac);
 }
