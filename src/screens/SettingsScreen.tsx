@@ -1,23 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, Alert, Switch,
+  TouchableOpacity, Alert, Switch, Modal, ActivityIndicator, Platform,
 } from 'react-native';
 import { useStore } from '../store';
 import {
   loadPairedDevice, unpairDevice, loadSensorWhitelist,
-  removeSensorFromWhitelist, clearSensorWhitelist,
+  addSensorToWhitelist, removeSensorFromWhitelist, clearSensorWhitelist,
   loadWheelSensorList, removeWheelSensor,
   loadActiveWheelSensorId, setActiveWheelSensorId,
-  loadCadenceSensorList, removeCadenceSensor,
-  loadActiveCadenceSensorId, setActiveCadenceSensorId,
-  PairedDevice, SensorEntry, WheelSensorDevice, CadenceSensorDevice,
+  PairedDevice, SensorEntry, WheelSensorDevice,
 } from '../security/pairing';
 import { QRPairScreen } from './QRPairScreen';
 import { CrrCalibrationScreen } from './CrrCalibrationScreen';
 import { wheelSensorApi } from '../hooks/useWheelSensor';
-import { cadenceSensorApi } from '../hooks/useCadenceSensor';
+import { bleApi } from '../hooks/useBLE';
+import { sensorPairing, DiscoveredSensor } from '../hooks/useSensorPairing';
 import { Colors, Sp, Radius } from '../theme';
+
+const SENSOR_TYPE_LABEL: Record<SensorEntry['type'], string> = {
+  power: 'Potenza',
+  csc:   'Velocità/Cadenza',
+  hr:    'Cardio',
+};
 
 // Circonferenze comuni (ETRTO → mm di rotolamento effettivo)
 const WHEEL_PRESETS = [
@@ -32,17 +37,18 @@ export function SettingsScreen() {
     calib, setCalib, isSimMode, setSimMode,
     setPairedDevice: setStorePairedDevice,
     wheelSensorStatus, wheelSensorId, crrCalib,
-    cadenceSensorStatus, cadenceSensorId,
   } = useStore();
 
-  const [pairedDevice, setPairedDevice]     = useState<PairedDevice | null>(null);
-  const [sensorList, setSensorList]         = useState<SensorEntry[]>([]);
-  const [wheelSensors, setWheelSensors]       = useState<WheelSensorDevice[]>([]);
-  const [activeWheelId, setActiveWheelId]     = useState<string | null>(null);
-  const [cadenceSensors, setCadenceSensors]   = useState<CadenceSensorDevice[]>([]);
-  const [activeCadenceId, setActiveCadenceId] = useState<string | null>(null);
-  const [showScanner, setShowScanner]         = useState(false);
-  const [showCrrCalib, setShowCrrCalib]       = useState(false);
+  const [pairedDevice, setPairedDevice]   = useState<PairedDevice | null>(null);
+  const [sensorList, setSensorList]       = useState<SensorEntry[]>([]);
+  const [wheelSensors, setWheelSensors]   = useState<WheelSensorDevice[]>([]);
+  const [activeWheelId, setActiveWheelId] = useState<string | null>(null);
+  const [showScanner, setShowScanner]     = useState(false);
+  const [showCrrCalib, setShowCrrCalib]   = useState(false);
+  // Pairing sensori esterni (scan-to-add → whitelist firmware 0xaa0b)
+  const [showSensorScan, setShowSensorScan] = useState(false);
+  const [discovered, setDiscovered]         = useState<DiscoveredSensor[]>([]);
+  const [scanning, setScanning]             = useState(false);
 
   const refreshWheelSensors = async () => {
     const [list, activeId] = await Promise.all([
@@ -53,21 +59,35 @@ export function SettingsScreen() {
     setActiveWheelId(activeId ?? list[0]?.id ?? null);
   };
 
-  const refreshCadenceSensors = async () => {
-    const [list, activeId] = await Promise.all([
-      loadCadenceSensorList(),
-      loadActiveCadenceSensorId(),
-    ]);
-    setCadenceSensors(list);
-    setActiveCadenceId(activeId ?? list[0]?.id ?? null);
-  };
-
   useEffect(() => {
     loadPairedDevice().then(setPairedDevice);
     loadSensorWhitelist().then(setSensorList);
     refreshWheelSensors();
-    refreshCadenceSensors();
   }, []);
+
+  // ── Pairing sensori esterni (broker) ───────────────────────────────────────
+  function openSensorScan() {
+    setDiscovered([]);
+    setScanning(true);
+    setShowSensorScan(true);
+    sensorPairing.startScan(
+      (s) => setDiscovered((prev) => (prev.some((d) => d.id === s.id) ? prev : [...prev, s])),
+      () => setScanning(false),
+    );
+  }
+
+  function closeSensorScan() {
+    sensorPairing.stopScan();
+    setScanning(false);
+    setShowSensorScan(false);
+  }
+
+  async function addDiscovered(s: DiscoveredSensor) {
+    await addSensorToWhitelist({ id: s.id, name: s.name, type: s.type });
+    setSensorList(await loadSensorWhitelist());
+    await bleApi.syncSensorWhitelist();   // riscrive la whitelist sul firmware
+    closeSensorScan();
+  }
 
   async function handleUnpair() {
     Alert.alert(
@@ -91,11 +111,13 @@ export function SettingsScreen() {
   async function handleRemoveSensor(id: string) {
     await removeSensorFromWhitelist(id);
     setSensorList(await loadSensorWhitelist());
+    await bleApi.syncSensorWhitelist();
   }
 
   async function handleClearSensors() {
     await clearSensorWhitelist();
     setSensorList([]);
+    await bleApi.syncSensorWhitelist();
   }
 
   async function handleRemoveWheelSensor(id: string, name: string) {
@@ -120,30 +142,6 @@ export function SettingsScreen() {
     await setActiveWheelSensorId(id);
     setActiveWheelId(id);
     wheelSensorApi.setPreferred(id);  // applica subito senza riavvio
-  }
-
-  async function handleRemoveCadenceSensor(id: string, name: string) {
-    Alert.alert(
-      'Rimuovi sensore',
-      `Rimuovere "${name}" dalla lista?`,
-      [
-        { text: 'Annulla', style: 'cancel' },
-        {
-          text: 'Rimuovi',
-          style: 'destructive',
-          onPress: async () => {
-            await removeCadenceSensor(id);
-            await refreshCadenceSensors();
-          },
-        },
-      ]
-    );
-  }
-
-  async function handleSetActiveCadenceSensor(id: string) {
-    await setActiveCadenceSensorId(id);
-    setActiveCadenceId(id);
-    cadenceSensorApi.setPreferred(id);  // applica subito senza riavvio
   }
 
   const lastCrr = crrCalib.result ?? crrCalib.history[0] ?? null;
@@ -282,94 +280,85 @@ export function SettingsScreen() {
         sendCommand={(cmd) => wheelSensorApi.sendCommand(cmd)}
       />
 
-      {/* ── Sensore Cadenza ── */}
-      <Text style={styles.sectionTitle}>Sensore Cadenza</Text>
+      {/* ── Sensori esterni (broker — contract v0.2.0 §2) ── */}
+      <Text style={styles.sectionTitle}>Sensori esterni</Text>
       <View style={styles.card}>
-
-        {/* Stato connessione live */}
-        <View style={styles.row}>
-          <View style={[styles.dot, {
-            backgroundColor:
-              cadenceSensorStatus === 'connected'  ? Colors.amber :
-              cadenceSensorStatus === 'scanning'   ? Colors.blue  : Colors.muted,
-          }]} />
-          <Text style={styles.deviceName}>
-            {cadenceSensorStatus === 'connected'
-              ? `Connesso${cadenceSensorId ? ` · ${cadenceSensorId.slice(-5)}` : ''}`
-              : cadenceSensorStatus === 'scanning'
-                ? 'Ricerca sensore…'
-                : 'Nessun sensore attivo'}
-          </Text>
-        </View>
-
         <Text style={styles.hint}>
-          Compatibile con qualsiasi sensore BLE CSC (Wahoo RPM Cadence,
-          Garmin Cadence, 4iiii, Polar, Stages) e con il sensore AeroDrag
-          Cadence. Si connette automaticamente al sensore preferito.
+          Potenza, velocità/cadenza e cardio si collegano SOLO al device
+          AeroDrag (firmware): l'app autorizza i loro MAC scrivendo la whitelist
+          sul firmware (0xaa0b) e i dati arrivano dal device. Su iOS il MAC del
+          sensore non è leggibile dall'app — usa Android per il pairing.
         </Text>
 
-        {/* Lista sensori registrati */}
-        {cadenceSensors.length > 0 && (
-          <>
-            <Text style={styles.subSectionLabel}>Sensori registrati</Text>
-            {cadenceSensors.map((s) => (
-              <View key={s.id} style={styles.wheelSensorRow}>
-                <TouchableOpacity
-                  style={styles.wheelSensorLeft}
-                  onPress={() => handleSetActiveCadenceSensor(s.id)}
-                >
-                  <View style={[styles.radioOuter, s.id === activeCadenceId && styles.radioAmber]}>
-                    {s.id === activeCadenceId && <View style={styles.radioInnerAmber} />}
-                  </View>
-                  <View style={styles.wheelSensorInfo}>
-                    <Text style={styles.wheelSensorName}>{s.name}</Text>
-                    {s.bikeLabel && <Text style={styles.wheelSensorBike}>{s.bikeLabel}</Text>}
-                    <Text style={styles.deviceId}>{s.id}</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleRemoveCadenceSensor(s.id, s.name)}>
-                  <Text style={styles.removeText}>Rimuovi</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </>
-        )}
-
-        {cadenceSensors.length === 0 && (
-          <Text style={styles.emptyText}>
-            Nessun sensore registrato.{'\n'}
-            Il sensore viene aggiunto automaticamente al primo collegamento.
-          </Text>
-        )}
-      </View>
-
-      {/* ── Sensori BLE accoppiati ── */}
-      <Text style={styles.sectionTitle}>Sensori BLE accoppiati</Text>
-      <View style={styles.card}>
         {sensorList.length === 0 ? (
-          <Text style={styles.emptyText}>
-            Nessun sensore salvato.{'\n'}
-            I sensori vengono aggiunti automaticamente al primo collegamento.
-          </Text>
+          <Text style={styles.emptyText}>Nessun sensore autorizzato.</Text>
         ) : (
-          <>
-            {sensorList.map((s) => (
-              <View key={s.id} style={styles.sensorRow}>
-                <View style={styles.sensorInfo}>
-                  <Text style={styles.sensorName}>{s.name}</Text>
-                  <Text style={styles.sensorType}>{s.type.toUpperCase()}</Text>
-                </View>
-                <TouchableOpacity onPress={() => handleRemoveSensor(s.id)}>
-                  <Text style={styles.removeText}>Rimuovi</Text>
-                </TouchableOpacity>
+          sensorList.map((s) => (
+            <View key={s.id} style={styles.sensorRow}>
+              <View style={styles.sensorInfo}>
+                <Text style={styles.sensorName}>{s.name}</Text>
+                <Text style={styles.sensorType}>{SENSOR_TYPE_LABEL[s.type]} · {s.id}</Text>
               </View>
-            ))}
-            <TouchableOpacity style={styles.dangerBtn} onPress={handleClearSensors}>
-              <Text style={styles.dangerText}>Rimuovi tutti i sensori</Text>
-            </TouchableOpacity>
-          </>
+              <TouchableOpacity onPress={() => handleRemoveSensor(s.id)}>
+                <Text style={styles.removeText}>Rimuovi</Text>
+              </TouchableOpacity>
+            </View>
+          ))
+        )}
+
+        <TouchableOpacity style={styles.btnPair} onPress={openSensorScan}>
+          <Text style={styles.btnPairText}>+ Aggiungi sensore</Text>
+        </TouchableOpacity>
+        {sensorList.length > 0 && (
+          <TouchableOpacity style={styles.dangerBtn} onPress={handleClearSensors}>
+            <Text style={styles.dangerText}>Rimuovi tutti</Text>
+          </TouchableOpacity>
         )}
       </View>
+
+      {/* Modal scansione/aggiunta sensori esterni */}
+      <Modal
+        visible={showSensorScan}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closeSensorScan}
+      >
+        <View style={styles.scanRoot}>
+          <View style={styles.scanHeader}>
+            <Text style={styles.scanTitle}>Aggiungi sensore</Text>
+            <TouchableOpacity onPress={closeSensorScan}>
+              <Text style={styles.closeBtn}>Chiudi</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <View style={styles.row}>
+              {scanning && <ActivityIndicator color={Colors.teal} />}
+              <Text style={styles.hint}>
+                {scanning ? 'Ricerca sensori nelle vicinanze…' : 'Scansione terminata.'}
+              </Text>
+            </View>
+            {discovered.length === 0 && !scanning && (
+              <Text style={styles.emptyText}>Nessun sensore trovato.</Text>
+            )}
+            {discovered.map((s) => {
+              const canAdd = Platform.OS === 'android';  // MAC disponibile solo su Android
+              return (
+                <View key={s.id} style={styles.sensorRow}>
+                  <View style={styles.sensorInfo}>
+                    <Text style={styles.sensorName}>{s.name}</Text>
+                    <Text style={styles.sensorType}>{SENSOR_TYPE_LABEL[s.type]} · {s.id}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => canAdd && addDiscovered(s)} disabled={!canAdd}>
+                    <Text style={[styles.btnPairText, !canAdd && { color: Colors.muted }]}>
+                      {canAdd ? 'Autorizza' : 'MAC n/d (iOS)'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* ── Calibrazione ── */}
       <Text style={styles.sectionTitle}>Calibrazione</Text>
@@ -686,4 +675,18 @@ const styles = StyleSheet.create({
   presetLabel:       { fontSize: 11, fontWeight: '600', color: Colors.muted },
   presetMm:          { fontSize: 10, color: Colors.muted, fontVariant: ['tabular-nums'] },
   presetLabelActive: { color: Colors.teal },
+
+  scanRoot:   { flex: 1, backgroundColor: Colors.bg },
+  scanHeader: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
+    paddingHorizontal: Sp.md,
+    paddingVertical:   Sp.sm,
+    backgroundColor:   Colors.s1,
+    borderBottomWidth: 0.5,
+    borderBottomColor: Colors.border,
+  },
+  scanTitle: { fontSize: 16, fontWeight: '700', color: Colors.textBright },
+  closeBtn:  { fontSize: 14, color: Colors.teal },
 });

@@ -292,3 +292,26 @@ export function parseDeviceQR(qrData: string): PairedDevice | null {
 export function isValidMAC(mac: string): boolean {
   return /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(mac);
 }
+
+// ── Whitelist sensori firmware (contract v0.2.0 §2, BLE 0xaa0b) ──────────────
+// L'elenco SensorEntry (power/csc/hr) NON è più vestigiale: è la sorgente
+// autorevole della whitelist scritta sul firmware via 0xaa0b. Il central del
+// firmware si connette SOLO ai MAC autorizzati (anti cross-talk); l'app non
+// apre più connessioni dati ai sensori (broker di pairing).
+export const SENSOR_WL_MAX = 5;   // come SENSOR_WL_MAX lato firmware
+
+// Codici tipo del wire 0xaa0b: 1=power, 2=csc, 3=hr, 4=wheel
+export const SENSOR_TYPE_CODE: Record<SensorEntry['type'], number> = {
+  power: 1,
+  csc:   2,
+  hr:    3,
+};
+
+// Converte "AA:BB:CC:DD:EE:FF" nei 6 byte big-endian attesi dal firmware
+// (mac[0]=0xAA). Ritorna null se non è un MAC valido — es. su iOS, dove
+// l'id di connessione BLE è un UUID e non il MAC hardware: in quel caso il
+// sensore non può essere inserito nella whitelist (vedi seam #14).
+export function macToWhitelistBytes(mac: string): number[] | null {
+  if (!isValidMAC(mac)) return null;
+  return mac.split(':').map((h) => parseInt(h, 16));
+}
