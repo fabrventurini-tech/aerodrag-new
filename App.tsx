@@ -5,7 +5,6 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { useBLE } from './src/hooks/useBLE';
-import { useWheelSensor, wheelSensorApi } from './src/hooks/useWheelSensor';
 import { coachAutoConnect } from './src/coach/link';
 import { useStore } from './src/store';
 import { NavBar, Screen } from './src/components';
@@ -78,17 +77,16 @@ export default function App() {
   } = useStore();
 
   const { syncConfigToDevice } = useBLE();
-  useWheelSensor();
 
-  // Ogni volta che l'utente modifica massa, Crr o circonferenza ruota,
-  // aggiorna sia l'ESP32 (config 12 B) sia il sensore ruota nRF52840
+  // Ogni volta che l'utente modifica massa, Crr o circonferenza ruota, aggiorna
+  // l'ESP32 (CONFIG 0xaa08, 12 B). Il firmware propaga wheelCircM/massa al
+  // sensore ruota (contract v0.2.0): l'app non scrive più direttamente al sensore.
   useEffect(() => {
     const active = athleteProfiles.find((p) => p.id === activeAthleteId);
     const mass = (active?.massRiderKg ?? calib.massRiderKg)
                + (active?.massBikeKg  ?? calib.massBikeKg);
     const crr  = active?.crr ?? calib.crr;
     syncConfigToDevice(mass, crr);
-    wheelSensorApi.writeConfig(calib.tireCircM, mass).catch(() => {});
   }, [calib, activeAthleteId, athleteProfiles]);
 
   useEffect(() => {
