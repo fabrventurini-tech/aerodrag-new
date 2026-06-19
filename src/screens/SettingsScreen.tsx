@@ -7,13 +7,10 @@ import { useStore } from '../store';
 import {
   loadPairedDevice, unpairDevice, loadSensorWhitelist,
   addSensorToWhitelist, removeSensorFromWhitelist, clearSensorWhitelist,
-  loadWheelSensorList, removeWheelSensor,
-  loadActiveWheelSensorId, setActiveWheelSensorId,
-  PairedDevice, SensorEntry, WheelSensorDevice,
+  PairedDevice, SensorEntry,
 } from '../security/pairing';
 import { QRPairScreen } from './QRPairScreen';
 import { CrrCalibrationScreen } from './CrrCalibrationScreen';
-import { wheelSensorApi } from '../hooks/useWheelSensor';
 import { bleApi } from '../hooks/useBLE';
 import { sensorPairing, DiscoveredSensor } from '../hooks/useSensorPairing';
 import { Colors, Sp, Radius } from '../theme';
@@ -22,6 +19,7 @@ const SENSOR_TYPE_LABEL: Record<SensorEntry['type'], string> = {
   power: 'Potenza',
   csc:   'Velocità/Cadenza',
   hr:    'Cardio',
+  wheel: 'Ruota (Crr)',
 };
 
 // Circonferenze comuni (ETRTO → mm di rotolamento effettivo)
@@ -41,8 +39,6 @@ export function SettingsScreen() {
 
   const [pairedDevice, setPairedDevice]   = useState<PairedDevice | null>(null);
   const [sensorList, setSensorList]       = useState<SensorEntry[]>([]);
-  const [wheelSensors, setWheelSensors]   = useState<WheelSensorDevice[]>([]);
-  const [activeWheelId, setActiveWheelId] = useState<string | null>(null);
   const [showScanner, setShowScanner]     = useState(false);
   const [showCrrCalib, setShowCrrCalib]   = useState(false);
   // Pairing sensori esterni (scan-to-add → whitelist firmware 0xaa0b)
@@ -50,19 +46,9 @@ export function SettingsScreen() {
   const [discovered, setDiscovered]         = useState<DiscoveredSensor[]>([]);
   const [scanning, setScanning]             = useState(false);
 
-  const refreshWheelSensors = async () => {
-    const [list, activeId] = await Promise.all([
-      loadWheelSensorList(),
-      loadActiveWheelSensorId(),
-    ]);
-    setWheelSensors(list);
-    setActiveWheelId(activeId ?? list[0]?.id ?? null);
-  };
-
   useEffect(() => {
     loadPairedDevice().then(setPairedDevice);
     loadSensorWhitelist().then(setSensorList);
-    refreshWheelSensors();
   }, []);
 
   // ── Pairing sensori esterni (broker) ───────────────────────────────────────
@@ -118,30 +104,6 @@ export function SettingsScreen() {
     await clearSensorWhitelist();
     setSensorList([]);
     await bleApi.syncSensorWhitelist();
-  }
-
-  async function handleRemoveWheelSensor(id: string, name: string) {
-    Alert.alert(
-      'Rimuovi sensore',
-      `Rimuovere "${name}" dalla lista?`,
-      [
-        { text: 'Annulla', style: 'cancel' },
-        {
-          text: 'Rimuovi',
-          style: 'destructive',
-          onPress: async () => {
-            await removeWheelSensor(id);
-            await refreshWheelSensors();
-          },
-        },
-      ]
-    );
-  }
-
-  async function handleSetActiveWheelSensor(id: string) {
-    await setActiveWheelSensorId(id);
-    setActiveWheelId(id);
-    wheelSensorApi.setPreferred(id);  // applica subito senza riavvio
   }
 
   const lastCrr = crrCalib.result ?? crrCalib.history[0] ?? null;
@@ -214,44 +176,11 @@ export function SettingsScreen() {
         </View>
 
         <Text style={styles.hint}>
-          Il sensore usa pairing multiplo non esclusivo: fino a 3 centrali
-          simultanei (es. app atleta + app coach + Garmin). Wahoo e Garmin
-          leggono la velocità via profilo CSC standard senza configurazione.
+          Il sensore ruota si collega SOLO al device AeroDrag (firmware): lo
+          autorizzi in "Sensori esterni" e i dati di coast-down arrivano dal
+          device (WHEEL_STREAM 0xaa0c). Lo stato qui sopra è "connesso" quando
+          il device sta ricevendo lo stream del sensore ruota.
         </Text>
-
-        {/* Lista sensori registrati */}
-        {wheelSensors.length > 0 && (
-          <>
-            <Text style={styles.subSectionLabel}>Sensori registrati</Text>
-            {wheelSensors.map((s) => (
-              <View key={s.id} style={styles.wheelSensorRow}>
-                <TouchableOpacity
-                  style={styles.wheelSensorLeft}
-                  onPress={() => handleSetActiveWheelSensor(s.id)}
-                >
-                  <View style={[styles.radioOuter, s.id === activeWheelId && styles.radioActive]}>
-                    {s.id === activeWheelId && <View style={styles.radioInner} />}
-                  </View>
-                  <View style={styles.wheelSensorInfo}>
-                    <Text style={styles.wheelSensorName}>{s.name}</Text>
-                    {s.bikeLabel && <Text style={styles.wheelSensorBike}>{s.bikeLabel}</Text>}
-                    <Text style={styles.deviceId}>{s.id}</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleRemoveWheelSensor(s.id, s.name)}>
-                  <Text style={styles.removeText}>Rimuovi</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </>
-        )}
-
-        {wheelSensors.length === 0 && (
-          <Text style={styles.emptyText}>
-            Nessun sensore registrato.{'\n'}
-            Il sensore viene aggiunto automaticamente al primo collegamento.
-          </Text>
-        )}
 
         {/* Ultimo Crr */}
         {lastCrr && (
@@ -277,7 +206,7 @@ export function SettingsScreen() {
       <CrrCalibrationScreen
         visible={showCrrCalib}
         onClose={() => setShowCrrCalib(false)}
-        sendCommand={(cmd) => wheelSensorApi.sendCommand(cmd)}
+        sendCommand={(cmd) => bleApi.sendWheelCommand(cmd)}
       />
 
       {/* ── Sensori esterni (broker — contract v0.2.0 §2) ── */}

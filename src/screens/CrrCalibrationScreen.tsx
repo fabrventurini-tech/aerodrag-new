@@ -6,7 +6,7 @@ import {
 import { useStore, CrrCalibResult, CrrRunResult } from '../store';
 import { surfaceLabelFromCrr } from '../physics/crr';
 import { Colors, Sp, Radius } from '../theme';
-import { WHEEL_CMD } from '../hooks/useWheelSensor';
+import { WHEEL_CMD } from '../hooks/useBLE';
 
 interface Props {
   visible:       boolean;

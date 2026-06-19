@@ -56,11 +56,24 @@ const CHR_CONFIG   = '0000aa08-0000-1000-8000-00805f9b34fb';
 const CHR_PHYSICS  = '0000aa09-0000-1000-8000-00805f9b34fb';
 const CHR_BATTERY  = '0000aa0a-0000-1000-8000-00805f9b34fb';
 const CHR_SENSOR_WL = '0000aa0b-0000-1000-8000-00805f9b34fb';  // whitelist sensori (v0.2.0)
+const CHR_WHEEL_STREAM = '0000aa0c-0000-1000-8000-00805f9b34fb';  // relay stream ruota Crr (v0.2.0)
+const CHR_WHEEL_CMD    = '0000aa0d-0000-1000-8000-00805f9b34fb';  // comando coast-down (v0.2.0)
+
+// Comandi coast-down inoltrati al sensore ruota via WHEEL_CMD 0xaa0d
+export const WHEEL_CMD = {
+  START_INDOOR:    0x01,
+  START_OUTDOOR_A: 0x02,
+  START_OUTDOOR_B: 0x03,
+  CANCEL:          0xff,
+} as const;
 
 // API a livello modulo: permette agli screen (SettingsScreen) di ri-scrivere la
 // whitelist sensori sul firmware dopo un add/remove, senza rimontare il hook.
 export const bleApi = {
   syncSensorWhitelist: async (): Promise<void> => {},
+  // Invia un comando coast-down (0x01/0x02/0x03/0xFF) al sensore ruota tramite
+  // il device principale (WHEEL_CMD 0xaa0d → il firmware inoltra al sensore).
+  sendWheelCommand: async (_cmd: number): Promise<boolean> => false,
 };
 
 // ── Parsing pacchetti BLE ─────────────────────────────────────────────────────
@@ -125,6 +138,19 @@ function parsePhysics(b64: string): PhysicsOutput | null {
   };
 }
 
+// WHEEL_STREAM 0xaa0c (NOTIFY, 16 B): relay grezzo del sensore ruota Crr
+// (contract v0.2.0 §2). float speedMs, accelMs2, tempC, vibRMS.
+function parseWheelStream(b64: string) {
+  const buf = Buffer.from(b64, 'base64');
+  if (buf.length < 16) return null;
+  return {
+    speedMs:  buf.readFloatLE(0),
+    accelMs2: buf.readFloatLE(4),
+    tempC:    buf.readFloatLE(8),
+    vibRMS:   buf.readFloatLE(12),
+  };
+}
+
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
 }
@@ -172,9 +198,12 @@ export function useBLE() {
   // riconnetterli a ogni ciclo di scan.
   const rejectedIdsRef = useRef<Set<string>>(new Set());
 
+  const wheelFreshRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const {
     setBleStatus, setBattery, updateSensors, setPhysicsFromDevice,
-    setDeviceIdentity, tick, isSimMode, pairedDeviceId,
+    setDeviceIdentity, updateWheelStream, setWheelSensorStatus,
+    tick, isSimMode, pairedDeviceId,
     activeAthleteId, athleteProfiles,
   } = useStore();
 
@@ -247,6 +276,17 @@ export function useBLE() {
     subscribe(CHR_BATTERY, (v) => {
       const buf = Buffer.from(v, 'base64');
       if (buf.length >= 1) setBattery(buf.readUInt8(0));
+    });
+    // CHR_WHEEL_STREAM (0xaa0c): relay del sensore ruota Crr (contract v0.2.0).
+    // Lo stream arriva dal firmware (broker): segna il sensore ruota come
+    // connesso finché i frame sono freschi.
+    subscribe(CHR_WHEEL_STREAM, (v) => {
+      const w = parseWheelStream(v);
+      if (!w) return;
+      updateWheelStream(w);
+      setWheelSensorStatus('connected');
+      if (wheelFreshRef.current) clearTimeout(wheelFreshRef.current);
+      wheelFreshRef.current = setTimeout(() => setWheelSensorStatus('idle'), 2000);
     });
     // CHR_IDENTITY (0xaa05) is READ+WRITE only — read once in connect(), not here
   }
@@ -425,6 +465,21 @@ export function useBLE() {
     if (deviceRef.current) await writeSensorWhitelist(deviceRef.current);
   }
 
+  // WHEEL_CMD 0xaa0d: inoltra il comando coast-down al sensore ruota via firmware
+  async function sendWheelCommand(cmd: number): Promise<boolean> {
+    if (!deviceRef.current) return false;
+    try {
+      const buf = Buffer.alloc(1);
+      buf.writeUInt8(cmd, 0);
+      await deviceRef.current.writeCharacteristicWithResponseForService(
+        SVC, CHR_WHEEL_CMD, buf.toString('base64')
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // ── Scan ───────────────────────────────────────────────────────────────────
   function startScan() {
     if (!manager.current) return;
@@ -460,9 +515,13 @@ export function useBLE() {
   // ── Simulazione ────────────────────────────────────────────────────────────
   function startSimulation() {
     setBleStatus('connected');
+    // In sim mode anche il sensore ruota è "connesso": lo stream Crr è
+    // sintetizzato qui (in produzione arriva dal firmware via 0xaa0c).
+    setWheelSensorStatus('connected');
     let t = 0;
     tickRef.current = setInterval(() => {
       t += 0.1;
+      const speedMs = 10 + Math.sin(t * 0.15) * 2;
       updateSensors({
         pitotPa:    35 + Math.sin(t * 0.3) * 10,
         staticPa:   101325,
@@ -472,9 +531,15 @@ export function useBLE() {
         pitchDeg:   Math.sin(t * 0.05) * 3,
         rollDeg:    0,
         powerW:     250 + Math.sin(t * 0.2) * 50,
-        speedMs:    10 + Math.sin(t * 0.15) * 2,
+        speedMs,
         cadenceRpm: 90 + Math.round(Math.sin(t * 0.1) * 5),
         hrBpm:      140 + Math.round(Math.sin(t * 0.07) * 10),
+      });
+      updateWheelStream({
+        speedMs,
+        accelMs2: -(0.004 * 9.80665 + 0.00015 * speedMs * speedMs),
+        tempC:    22 + Math.sin(t * 0.05),
+        vibRMS:   0.15 + Math.abs(Math.sin(t * 0.4)) * 0.05,
       });
     }, 100);
   }
@@ -518,13 +583,15 @@ export function useBLE() {
       disconnectSub.current?.remove();
       disconnectSub.current = null;
       if (tickRef.current) clearInterval(tickRef.current);
+      if (wheelFreshRef.current) clearTimeout(wheelFreshRef.current);
       manager.current?.destroy();
       manager.current = null;
     };
   }, [isSimMode]);
 
-  // Registra la funzione reale nell'API a livello modulo (per gli screen)
+  // Registra le funzioni reali nell'API a livello modulo (per gli screen)
   bleApi.syncSensorWhitelist = syncSensorWhitelist;
+  bleApi.sendWheelCommand    = sendWheelCommand;
 
-  return { syncConfigToDevice, syncSensorWhitelist };
+  return { syncConfigToDevice, syncSensorWhitelist, sendWheelCommand };
 }

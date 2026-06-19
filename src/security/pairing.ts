@@ -40,9 +40,9 @@ export interface PairedDevice {
 }
 
 export interface SensorEntry {
-  id:   string;   // MAC address sensore BLE (power meter, CSC, HR)
+  id:   string;   // MAC address sensore BLE (power meter, CSC, HR, ruota Crr)
   name: string;   // nome sensore
-  type: 'power' | 'csc' | 'hr';
+  type: 'power' | 'csc' | 'hr' | 'wheel';
 }
 
 // ── Device AeroDrag principale ────────────────────────────────────────────────
@@ -305,6 +305,7 @@ export const SENSOR_TYPE_CODE: Record<SensorEntry['type'], number> = {
   power: 1,
   csc:   2,
   hr:    3,
+  wheel: 4,
 };
 
 // Converte "AA:BB:CC:DD:EE:FF" nei 6 byte big-endian attesi dal firmware

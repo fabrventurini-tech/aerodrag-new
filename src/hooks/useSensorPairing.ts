@@ -19,8 +19,9 @@ import { SensorEntry } from '../security/pairing';
 const SVC_POWER = '00001818-0000-1000-8000-00805f9b34fb';
 const SVC_CSC   = '00001816-0000-1000-8000-00805f9b34fb';
 const SVC_HR    = '0000180d-0000-1000-8000-00805f9b34fb';
+const SVC_WHEEL = '0000bb00-0000-1000-8000-00805f9b34fb';   // sensore ruota Crr
 
-export type SensorKind = SensorEntry['type'];   // 'power' | 'csc' | 'hr'
+export type SensorKind = SensorEntry['type'];   // 'power' | 'csc' | 'hr' | 'wheel'
 
 export interface DiscoveredSensor {
   id:   string;          // device.id (MAC su Android, UUID su iOS)
@@ -32,6 +33,7 @@ function typeFromServices(uuids: string[] | null): SensorKind | null {
   if (!uuids) return null;
   const lower = uuids.map((u) => u.toLowerCase());
   if (lower.includes(SVC_POWER)) return 'power';
+  if (lower.includes(SVC_WHEEL)) return 'wheel';   // prima di CSC: il sensore ruota espone anche 0x1816
   if (lower.includes(SVC_CSC))   return 'csc';
   if (lower.includes(SVC_HR))    return 'hr';
   return null;
@@ -66,7 +68,7 @@ class SensorPairingScanner {
     this.seen.clear();
     this.manager = new BleManager();
     this.manager.startDeviceScan(
-      [SVC_POWER, SVC_CSC, SVC_HR],
+      [SVC_POWER, SVC_CSC, SVC_HR, SVC_WHEEL],
       { allowDuplicates: false },
       (err: Error | null, device: Device | null) => {
         if (err) { onError?.(err.message); return; }
