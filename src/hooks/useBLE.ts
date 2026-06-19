@@ -24,8 +24,12 @@
  *   - Tutti i multi-byte little-endian; float IEEE-754 32 bit raw.
  *   - MTU: PHYSICS (28 B) richiede MTU ≥ 31, READ IDENTITY (50 B) MTU ≥ 53.
  *     Si negozia requestMTU 185 alla connect (Android; iOS automatico).
- *   - 0xaa08 letto on-connect (la circonferenza ruota è del device) e scritto
- *     on-connect + ad ogni cambio massa/Crr in app (i profili guidano massa/Crr).
+ *   - 0xaa05 letto on-connect: il device_id (MAC) è l'IDENTITÀ CANONICA del
+ *     device (contract v0.1.4/v0.2.0 §2) → unica sorgente del campo `device`
+ *     dei frame coach. device.id BLE (UUID su iOS) NON è l'identità.
+ *   - 0xaa08 (contract v0.2.0): l'app è autorevole per mass/crr/wheelCircM e li
+ *     scrive on-connect + a ogni cambio in app; la READ è solo default/echo
+ *     (il wheelCircM NON viene più adottato dal device).
  *   - 0xaa09 è la sorgente di verità del CdA — l'ESP32 calcola in autonomia;
  *     il calcolo locale in engine.ts resta solo per sim mode / firmware vecchio.
  */
@@ -36,6 +40,7 @@ import { BleManager, Device, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 import { useStore } from '../store';
 import { PhysicsOutput } from '../physics/engine';
+import { isValidMAC } from '../security/pairing';
 
 // ── UUID ──────────────────────────────────────────────────────────────────────
 const SVC          = '0000aa00-0000-1000-8000-00805f9b34fb';
@@ -114,6 +119,19 @@ function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
 }
 
+// IDENTITY 0xaa05 (READ, 50 B): char device_id[18] ("AA:BB:..\0") + char
+// athlete_name[32]. Estrae il MAC canonico (contract v0.1.4/v0.2.0 §2): è
+// l'unica sorgente del campo `device` dei frame coach, indipendente dall'id
+// di connessione BLE (su iOS è un UUID, non il MAC).
+function parseIdentityMac(b64: string): string | null {
+  const buf = Buffer.from(b64, 'base64');
+  if (buf.length < 17) return null;
+  let end = 0;
+  while (end < 18 && end < buf.length && buf[end] !== 0) end++;
+  const mac = buf.toString('ascii', 0, end).trim().toUpperCase();
+  return isValidMAC(mac) ? mac : null;
+}
+
 // Tronca una stringa a maxBytes UTF-8 SENZA spezzare un carattere multibyte:
 // un byte orfano (≥ 0x80) passerebbe la sanitizzazione del firmware e
 // finirebbe come UTF-8 invalido nel JSON dei frame WebSocket verso il Pi.
@@ -137,10 +155,16 @@ export function useBLE() {
   const subs           = useRef<Subscription[]>([]);
   const disconnectSub  = useRef<Subscription | null>(null);
   const pairedIdRef    = useRef<string | null>(null);
+  // device.id NATIVO del device confermato (su iOS è un UUID, non il MAC):
+  // usato per il fast-path di riconnessione, mai come identità (§2 v0.1.4).
+  const confirmedNativeIdRef = useRef<string | null>(null);
+  // device.id nativi già scartati (identità 0xaa05 ≠ MAC del QR): evita di
+  // riconnetterli a ogni ciclo di scan.
+  const rejectedIdsRef = useRef<Set<string>>(new Set());
 
   const {
     setBleStatus, setBattery, updateSensors, setPhysicsFromDevice,
-    tick, isSimMode, pairedDeviceId,
+    setDeviceIdentity, tick, isSimMode, pairedDeviceId,
     activeAthleteId, athleteProfiles,
   } = useStore();
 
@@ -258,26 +282,41 @@ export function useBLE() {
       // arriverebbero troncate con l'MTU default di 23
       const connected = await device.connect({ autoConnect: false, requestMTU: 185 });
       await connected.discoverAllServicesAndCharacteristics();
+
+      // ── Identità canonica (contract v0.1.4/v0.2.0 §2) ──────────────────────
+      // Legge il MAC da IDENTITY 0xaa05 e lo confronta col MAC del QR (se
+      // presente). Su iOS device.id è un UUID CoreBluetooth (non il MAC),
+      // quindi la verifica del device corretto avviene QUI, dopo la connessione
+      // e la lettura di 0xaa05 — non col filtro di scan sul MAC.
+      let identityMac: string | null = null;
+      try {
+        const idc = await connected.readCharacteristicForService(SVC, CHR_IDENTITY);
+        if (idc.value) identityMac = parseIdentityMac(idc.value);
+      } catch {}
+
+      const wantMac = pairedIdRef.current?.toUpperCase() ?? null;
+      if (wantMac && identityMac && identityMac !== wantMac) {
+        // Device sbagliato (es. un altro AeroDrag Pro vicino): scarta questo
+        // device.id nativo e riprende la scansione.
+        rejectedIdsRef.current.add(device.id);
+        try { await connected.cancelConnection(); } catch {}
+        setBleStatus('scanning');
+        startScan();
+        return;
+      }
+
       deviceRef.current = connected;
+      confirmedNativeIdRef.current = device.id;
+      // Identità coach = 0xaa05 (fallback al MAC del QR se la READ fallisce)
+      setDeviceIdentity(identityMac ?? wantMac);
       setBleStatus('connected');
       subscribeAll(connected);
       startAntPolling(connected);
 
-      // Legge la CONFIG dal device (12 B): la circonferenza ruota è di
-      // proprietà del device; massa e Crr restano guidati dall'app (profili)
-      try {
-        const cfg = await connected.readCharacteristicForService(SVC, CHR_CONFIG);
-        if (cfg.value) {
-          const buf = Buffer.from(cfg.value, 'base64');
-          if (buf.length >= 12) {
-            const wheel = buf.readFloatLE(8);
-            const { calib, setCalib } = useStore.getState();
-            if (wheel >= 1.0 && wheel <= 2.5 && Math.abs(wheel - calib.tireCircM) > 0.0005) {
-              setCalib({ tireCircM: wheel });
-            }
-          }
-        }
-      } catch {}
+      // CONFIG 0xaa08 (contract v0.2.0): l'app è autorevole per TUTTI e tre i
+      // parametri (mass/crr/wheelCircM). NON adottiamo più il wheelCircM dal
+      // device — la READ è solo default/echo; è l'app a scrivere il proprio
+      // valore (vedi writeDeviceConfig sotto).
 
       // Write active athlete name to firmware NVS (shown on display and in coach frames)
       const state         = useStore.getState();
@@ -308,6 +347,7 @@ export function useBLE() {
         cleanupSubs();
         stopAntPolling();
         deviceRef.current = null;
+        setDeviceIdentity(null);   // l'identità sarà riletta da 0xaa05 al reconnect
         setBleStatus('scanning');
         startScan();
       });
@@ -356,9 +396,19 @@ export function useBLE() {
         if (err) { setBleStatus('error'); return; }
         if (!device) return;
 
-        // Se c'è un device accoppiato, connetti solo quello (via ref per leggere il valore aggiornato)
-        const pid = pairedIdRef.current;
-        if (pid && device.id !== pid) return;
+        const wantMac = pairedIdRef.current?.toUpperCase() ?? null;
+
+        if (confirmedNativeIdRef.current) {
+          // Device già confermato in precedenza: fast-path sul device.id
+          // nativo (vale anche su iOS, dove è un UUID stabile per-installazione).
+          if (device.id !== confirmedNativeIdRef.current) return;
+        } else {
+          if (rejectedIdsRef.current.has(device.id)) return;
+          // Android: device.id È il MAC → pre-filtra sul MAC del QR.
+          // iOS: device.id è un UUID → non si filtra qui; ci si connette e si
+          // verifica l'identità leggendo 0xaa05 in connect().
+          if (wantMac && Platform.OS === 'android' && device.id.toUpperCase() !== wantMac) return;
+        }
 
         manager.current?.stopDeviceScan();
         connect(device);

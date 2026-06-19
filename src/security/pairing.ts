@@ -1,17 +1,19 @@
 /**
  * pairing.ts
- * Gestione pairing sicuro tra app e device AeroDrag.
+ * Gestione del pairing tra app e device AeroDrag.
  *
- * Meccanismo:
- *   1. L'utente scansiona il QR sul device (contiene deviceId + challenge)
- *   2. L'app salva il deviceId in AsyncStorage
- *   3. useBLE si connette SOLO al deviceId salvato (whitelist MAC)
- *   4. BLE bonding garantisce che i dati siano cifrati AES-CCM
+ * Meccanismo (contract v0.1.4/v0.2.0 §2):
+ *   1. L'utente scansiona il QR sul device → contiene SOLO il MAC
+ *      (`AERODRAG://PAIR/<MAC>`). Nessun challenge crittografico.
+ *   2. L'app salva il MAC in AsyncStorage (whitelist: quale device accoppiare).
+ *   3. useBLE conferma il device leggendo l'identità da IDENTITY `0xaa05` e
+ *      verificando che coincida col MAC del QR (iOS-safe: l'id di connessione
+ *      BLE è un UUID, non il MAC).
  *
- * Anti-sniffing:
- *   - Il filtro MAC impedisce connessioni a device non accoppiati
- *   - I dati BLE sono cifrati a livello link (BLE 4.2+ con bonding)
- *   - Il device ESP32 accetta connessioni solo dal MAC dell'app accoppiata
+ * NOTA sicurezza: allo stato attuale NON è implementato alcun bonding/cifratura
+ * a livello link né alcun challenge nel QR. Il QR è solo la sorgente del MAC
+ * autorevole; il filtro MAC riduce le connessioni accidentali ma non è una
+ * misura anti-sniffing.
  *
  * Wheel sensor (sensore ruota Crr):
  *   - Pairing NON esclusivo: il sensore ruota usa BLE aperto senza bonding

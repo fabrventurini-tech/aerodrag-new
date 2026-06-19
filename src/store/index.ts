@@ -118,6 +118,10 @@ interface AeroDragStore {
   batteryPct: number;
   isSimMode:  boolean;
   pairedDeviceId: string | null;
+  // Identità canonica del device, letta da IDENTITY 0xaa05 alla connessione
+  // (contract v0.1.4/v0.2.0 §2): è l'UNICA sorgente del campo `device` dei
+  // frame coach (§3). Il MAC del QR (pairedDeviceId) resta solo whitelist.
+  deviceIdentity: string | null;
 
   // Stato BLE sensore ruota
   wheelSensorStatus: 'idle' | 'scanning' | 'connecting' | 'connected' | 'error';
@@ -170,6 +174,7 @@ interface AeroDragStore {
   setBattery:       (pct: number) => void;
   setSimMode:       (v: boolean) => void;
   setPairedDevice:  (id: string | null) => void;
+  setDeviceIdentity: (mac: string | null) => void;
 
   // Actions BLE sensore ruota
   setWheelSensorStatus: (s: AeroDragStore['wheelSensorStatus']) => void;
@@ -228,6 +233,7 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   batteryPct:      0,
   isSimMode:       false,
   pairedDeviceId:  null,
+  deviceIdentity:  null,
   wheelSensorStatus:   'idle',
   wheelSensorId:       null,
   wheelStream:         { speedMs: 0, accelMs2: 0, tempC: 20, vibRMS: 0 },
@@ -258,6 +264,7 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   setBattery:      (pct) => set({ batteryPct: pct }),
   setSimMode:      (v) => set({ isSimMode: v }),
   setPairedDevice: (id) => set({ pairedDeviceId: id }),
+  setDeviceIdentity: (mac) => set({ deviceIdentity: mac }),
 
   // ── BLE sensore ruota ──────────────────────────────────────────────────────
   setWheelSensorStatus: (s) => set({ wheelSensorStatus: s }),

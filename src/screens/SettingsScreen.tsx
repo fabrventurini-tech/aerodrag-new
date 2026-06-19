@@ -428,9 +428,10 @@ export function SettingsScreen() {
           })}
         </View>
         <Text style={styles.hint}>
-          La circonferenza viene inviata sia al device AeroDrag (ESP32) sia al
-          sensore ruota Crr. Alla connessione l'app adotta il valore salvato
-          sul device.
+          La circonferenza è impostata dall'app ed è autorevole (contract
+          v0.2.0): viene scritta sul device AeroDrag in CONFIG (0xaa08). Il
+          valore sul device è solo default/echo e non viene più adottato
+          dall'app alla connessione.
         </Text>
         <CalibRow
           label="Offset Pitot (Pa)"
