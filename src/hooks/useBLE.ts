@@ -40,7 +40,10 @@ import { BleManager, Device, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 import { useStore } from '../store';
 import { PhysicsOutput } from '../physics/engine';
-import { isValidMAC } from '../security/pairing';
+import {
+  isValidMAC, loadSensorWhitelist, macToWhitelistBytes,
+  SENSOR_TYPE_CODE, SENSOR_WL_MAX,
+} from '../security/pairing';
 
 // ── UUID ──────────────────────────────────────────────────────────────────────
 const SVC          = '0000aa00-0000-1000-8000-00805f9b34fb';
@@ -52,6 +55,13 @@ const CHR_IDENTITY = '0000aa05-0000-1000-8000-00805f9b34fb';
 const CHR_CONFIG   = '0000aa08-0000-1000-8000-00805f9b34fb';
 const CHR_PHYSICS  = '0000aa09-0000-1000-8000-00805f9b34fb';
 const CHR_BATTERY  = '0000aa0a-0000-1000-8000-00805f9b34fb';
+const CHR_SENSOR_WL = '0000aa0b-0000-1000-8000-00805f9b34fb';  // whitelist sensori (v0.2.0)
+
+// API a livello modulo: permette agli screen (SettingsScreen) di ri-scrivere la
+// whitelist sensori sul firmware dopo un add/remove, senza rimontare il hook.
+export const bleApi = {
+  syncSensorWhitelist: async (): Promise<void> => {},
+};
 
 // ── Parsing pacchetti BLE ─────────────────────────────────────────────────────
 
@@ -241,15 +251,11 @@ export function useBLE() {
     // CHR_IDENTITY (0xaa05) is READ+WRITE only — read once in connect(), not here
   }
 
-  // Applica power/cad/hr allo store rispettando il sensore cadenza dedicato
+  // Applica power/cad/hr allo store. Contract v0.2.0 §2: i sensori esterni si
+  // bondano SOLO al firmware (broker model) → power/cad/hr arrivano sempre da
+  // 0xaa04, niente più override da un sensore cadenza connesso dall'app.
   function applySensors(raw: NonNullable<ReturnType<typeof parseSensors>>) {
-    const parsed: Partial<typeof raw> = { ...raw };
-    // Se il sensore cadenza BLE dedicato è connesso, ignora la cadenza
-    // dell'ESP32 (manderebbe 0 schiacciando il valore reale)
-    if (useStore.getState().cadenceSensorStatus === 'connected') {
-      delete parsed.cadenceRpm;
-    }
-    updateSensors(parsed);
+    updateSensors(raw);
   }
 
   // ── Poll ANT (1 Hz) ──────────────────────────────────────────────────────
@@ -341,6 +347,9 @@ export function useBLE() {
         await writeDeviceConfig(connected, mass, crr);
       } catch {}
 
+      // Scrive la whitelist sensori sul firmware (broker di pairing, v0.2.0 §2)
+      await writeSensorWhitelist(connected);
+
       // Rilevamento disconnessione
       disconnectSub.current?.remove();
       disconnectSub.current = connected.onDisconnected(() => {
@@ -382,6 +391,38 @@ export function useBLE() {
   // Versione pubblica che usa il device attualmente connesso (per chiamate esterne)
   async function syncConfigToDevice(massKg: number, crr: number): Promise<void> {
     if (deviceRef.current) await writeDeviceConfig(deviceRef.current, massKg, crr);
+  }
+
+  // ── Whitelist sensori → SENSOR_WHITELIST 0xaa0b (contract v0.2.0 §2) ────────
+  // L'app è broker di pairing: scrive sul firmware l'elenco dei sensori
+  // autorizzati (power/csc/hr). Il central del firmware si connette SOLO a
+  // questi MAC. Payload: [count] + count×([type][mac0..5]) big-endian.
+  // I sensori senza MAC valido (es. iOS, dove l'id BLE è un UUID) vengono
+  // esclusi: non possono essere inseriti nella whitelist (vedi seam #14).
+  async function writeSensorWhitelist(device: Device): Promise<void> {
+    try {
+      const list = (await loadSensorWhitelist()).slice(0, SENSOR_WL_MAX);
+      const entries: { type: number; mac: number[] }[] = [];
+      for (const s of list) {
+        const mac  = macToWhitelistBytes(s.id);
+        const type = SENSOR_TYPE_CODE[s.type];
+        if (mac && type) entries.push({ type, mac });
+      }
+      const buf = Buffer.alloc(1 + entries.length * 7);
+      buf.writeUInt8(entries.length, 0);
+      entries.forEach((e, i) => {
+        buf.writeUInt8(e.type, 1 + i * 7);
+        for (let j = 0; j < 6; j++) buf.writeUInt8(e.mac[j], 2 + i * 7 + j);
+      });
+      await device.writeCharacteristicWithResponseForService(
+        SVC, CHR_SENSOR_WL, buf.toString('base64')
+      );
+    } catch {}
+  }
+
+  // Pubblica: ri-scrive la whitelist sul device connesso (dopo add/remove in UI)
+  async function syncSensorWhitelist(): Promise<void> {
+    if (deviceRef.current) await writeSensorWhitelist(deviceRef.current);
   }
 
   // ── Scan ───────────────────────────────────────────────────────────────────
@@ -482,5 +523,8 @@ export function useBLE() {
     };
   }, [isSimMode]);
 
-  return { syncConfigToDevice };
+  // Registra la funzione reale nell'API a livello modulo (per gli screen)
+  bleApi.syncSensorWhitelist = syncSensorWhitelist;
+
+  return { syncConfigToDevice, syncSensorWhitelist };
 }

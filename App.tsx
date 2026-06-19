@@ -6,7 +6,6 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { useBLE } from './src/hooks/useBLE';
 import { useWheelSensor, wheelSensorApi } from './src/hooks/useWheelSensor';
-import { useCadenceSensor } from './src/hooks/useCadenceSensor';
 import { coachAutoConnect } from './src/coach/link';
 import { useStore } from './src/store';
 import { NavBar, Screen } from './src/components';
@@ -80,7 +79,6 @@ export default function App() {
 
   const { syncConfigToDevice } = useBLE();
   useWheelSensor();
-  useCadenceSensor();
 
   // Ogni volta che l'utente modifica massa, Crr o circonferenza ruota,
   // aggiorna sia l'ESP32 (config 12 B) sia il sensore ruota nRF52840
