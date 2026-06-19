@@ -57,9 +57,11 @@ export function coachAutoConnect(): void {
 function sendHello(): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const state = useStore.getState();
-  // contract v0.1.2 §3: senza un `device` MAC valido il Pi rifiuta i frame →
-  // non annunciamo l'identità finché il pairing non fornisce un MAC.
-  const device = state.pairedDeviceId;
+  // contract v0.1.4/v0.2.0 §2: l'identità canonica è quella letta da IDENTITY
+  // 0xaa05 (deviceIdentity). Il MAC del QR è solo fallback whitelist.
+  // §3: senza un `device` MAC valido il Pi rifiuta i frame → non annunciamo
+  // l'identità finché non è disponibile.
+  const device = state.deviceIdentity ?? state.pairedDeviceId;
   if (!device || !isValidMAC(device)) return;
   const profile = state.athleteProfiles.find((p) => p.id === state.activeAthleteId);
   ws.send(JSON.stringify({
@@ -77,14 +79,16 @@ function startDataLoop(): void {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const {
       physics: p, sensor: s, batteryPct: bat,
-      currentLap: lap, pairedDeviceId: devId,
+      currentLap: lap, deviceIdentity, pairedDeviceId,
       activeAthleteId: aid, athleteProfiles: profiles,
     } = useStore.getState();
 
     if (!p.valid) return;
-    // contract v0.1.2 §3: `device` deve essere un MAC valido, altrimenti il Pi
+    // contract v0.2.0 §2/§3: `device` = identità canonica da 0xaa05
+    // (fallback al MAC del QR). Deve essere un MAC valido, altrimenti il Pi
     // scarta il frame all'ingestione (nessuna sessione anonima). In sim mode /
     // app non accoppiata non c'è identità → non si invia.
+    const devId = deviceIdentity ?? pairedDeviceId;
     if (!devId || !isValidMAC(devId)) return;
 
     const athleteName = profiles.find((x) => x.id === aid)?.name ?? 'Atleta';
