@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SensorInput, PhysicsOutput, computePhysics } from '../physics/engine';
-import { loadPairedDevice } from '../security/pairing';
+import { loadPairedDevice, DiscoveredSensor } from '../security/pairing';
 import { WheelSample, CrrRunResult, CrrCalibResult, fitCrrFromRun, combineIndoorRuns, combineOutdoorRuns, surfaceLabelFromCrr } from '../physics/crr';
 
 // ── Tipi ──────────────────────────────────────────────────────────────────────
@@ -132,6 +132,10 @@ interface AeroDragStore {
   cadenceSensorStatus: 'idle' | 'scanning' | 'connecting' | 'connected' | 'error';
   cadenceSensorId:     string | null;
 
+  // Discovery sensori firmware-driven (SENSOR_SCAN 0xaa0e, contract v0.2.2):
+  // i candidati arrivano dal firmware (MAC reale), l'app li mostra e autorizza.
+  discoveredSensors: DiscoveredSensor[];
+
   // Stato connessione dashboard coach (gestita da src/coach/link.ts)
   coachStatus:   'idle' | 'connecting' | 'connected' | 'error';
   coachErrorMsg: string;
@@ -186,6 +190,10 @@ interface AeroDragStore {
   setCadenceSensorStatus: (s: AeroDragStore['cadenceSensorStatus']) => void;
   setCadenceSensorId:     (id: string | null) => void;
 
+  // Actions discovery sensori (0xaa0e)
+  addDiscoveredSensor:    (s: DiscoveredSensor) => void;
+  clearDiscoveredSensors: () => void;
+
   // Actions coach
   setCoachStatus: (s: AeroDragStore['coachStatus'], err?: string) => void;
 
@@ -239,6 +247,7 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   wheelStream:         { speedMs: 0, accelMs2: 0, tempC: 20, vibRMS: 0 },
   cadenceSensorStatus: 'idle',
   cadenceSensorId:     null,
+  discoveredSensors:   [],
   coachStatus:         'idle',
   coachErrorMsg:       '',
   crrCalib:          DEFAULT_CRR_CALIB,
@@ -273,6 +282,14 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   // ── BLE sensore cadenza ────────────────────────────────────────────────────
   setCadenceSensorStatus: (s) => set({ cadenceSensorStatus: s }),
   setCadenceSensorId:     (id) => set({ cadenceSensorId: id }),
+
+  // ── Discovery sensori (0xaa0e) ───────────────────────────────────────────────
+  addDiscoveredSensor: (s) => set((st) => (
+    st.discoveredSensors.some((d) => d.mac === s.mac)
+      ? {}
+      : { discoveredSensors: [...st.discoveredSensors, s] }
+  )),
+  clearDiscoveredSensors: () => set({ discoveredSensors: [] }),
 
   // ── Coach ──────────────────────────────────────────────────────────────────
   setCoachStatus: (s, err) => set({ coachStatus: s, coachErrorMsg: err ?? '' }),

@@ -308,6 +308,23 @@ export const SENSOR_TYPE_CODE: Record<SensorEntry['type'], number> = {
   wheel: 4,
 };
 
+// Mappa inversa per il parsing delle entry di SENSOR_SCAN 0xaa0e (v0.2.2)
+export const SENSOR_TYPE_FROM_CODE: Record<number, SensorEntry['type']> = {
+  1: 'power',
+  2: 'csc',
+  3: 'hr',
+  4: 'wheel',
+};
+
+// Sensore scoperto dalla discovery firmware-driven (SENSOR_SCAN 0xaa0e, v0.2.2):
+// il MAC arriva dal firmware (che vede i MAC reali) → funziona anche su iOS.
+export interface DiscoveredSensor {
+  type: SensorEntry['type'];
+  mac:  string;   // "AA:BB:CC:DD:EE:FF"
+  name: string;
+  rssi: number;
+}
+
 // Converte "AA:BB:CC:DD:EE:FF" nei 6 byte big-endian attesi dal firmware
 // (mac[0]=0xAA). Ritorna null se non è un MAC valido — es. su iOS, dove
 // l'id di connessione BLE è un UUID e non il MAC hardware: in quel caso il

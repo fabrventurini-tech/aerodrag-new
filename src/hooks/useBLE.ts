@@ -42,7 +42,7 @@ import { useStore } from '../store';
 import { PhysicsOutput } from '../physics/engine';
 import {
   isValidMAC, loadSensorWhitelist, macToWhitelistBytes,
-  SENSOR_TYPE_CODE, SENSOR_WL_MAX,
+  SENSOR_TYPE_CODE, SENSOR_TYPE_FROM_CODE, SENSOR_WL_MAX, DiscoveredSensor,
 } from '../security/pairing';
 
 // ── UUID ──────────────────────────────────────────────────────────────────────
@@ -59,6 +59,8 @@ const CHR_SENSOR_WL = '0000aa0b-0000-1000-8000-00805f9b34fb';  // whitelist sens
 const CHR_WHEEL_STREAM = '0000aa0c-0000-1000-8000-00805f9b34fb';  // relay stream ruota Crr (v0.2.0)
 const CHR_WHEEL_CMD    = '0000aa0d-0000-1000-8000-00805f9b34fb';  // comando coast-down (v0.2.0)
 
+const CHR_SENSOR_SCAN  = '0000aa0e-0000-1000-8000-00805f9b34fb';  // discovery sensori firmware (v0.2.2)
+
 // Comandi coast-down inoltrati al sensore ruota via WHEEL_CMD 0xaa0d
 export const WHEEL_CMD = {
   START_INDOOR:    0x01,
@@ -74,6 +76,10 @@ export const bleApi = {
   // Invia un comando coast-down (0x01/0x02/0x03/0xFF) al sensore ruota tramite
   // il device principale (WHEEL_CMD 0xaa0d → il firmware inoltra al sensore).
   sendWheelCommand: async (_cmd: number): Promise<boolean> => false,
+  // Discovery sensori pilotata dal firmware (SENSOR_SCAN 0xaa0e, v0.2.2):
+  // il firmware scansiona e notifica i candidati con MAC reale (iOS+Android).
+  startSensorDiscovery: async (): Promise<void> => {},
+  stopSensorDiscovery:  async (): Promise<void> => {},
 };
 
 // ── Parsing pacchetti BLE ─────────────────────────────────────────────────────
@@ -151,6 +157,25 @@ function parseWheelStream(b64: string) {
   };
 }
 
+// SENSOR_SCAN 0xaa0e (NOTIFY, contract v0.2.2): una entry per sensore scoperto
+// dal firmware. type(1) + mac[6] big-endian + rssi(int8) + nameLen(1) + name.
+function parseSensorScanEntry(b64: string): DiscoveredSensor | null {
+  const buf = Buffer.from(b64, 'base64');
+  if (buf.length < 9) return null;
+  const type = SENSOR_TYPE_FROM_CODE[buf.readUInt8(0)];
+  if (!type) return null;
+  const mac = Array.from(buf.subarray(1, 7))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join(':')
+    .toUpperCase();
+  const rssi    = buf.readInt8(7);
+  const nameLen = buf.readUInt8(8);
+  const name    = buf.length >= 9 + nameLen && nameLen > 0
+    ? buf.toString('utf8', 9, 9 + nameLen)
+    : `Sensore ${mac.slice(-5)}`;
+  return { type, mac, name, rssi };
+}
+
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));
 }
@@ -199,6 +224,8 @@ export function useBLE() {
   const rejectedIdsRef = useRef<Set<string>>(new Set());
 
   const wheelFreshRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sensorScanSub  = useRef<Subscription | null>(null);
+  const sensorScanStop = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     setBleStatus, setBattery, updateSensors, setPhysicsFromDevice,
@@ -465,6 +492,52 @@ export function useBLE() {
     if (deviceRef.current) await writeSensorWhitelist(deviceRef.current);
   }
 
+  // ── Discovery sensori firmware-driven (SENSOR_SCAN 0xaa0e, v0.2.2) ─────────
+  // L'app non scansiona più i sensori col proprio stack BLE (su iOS non avrebbe
+  // i MAC reali). Avvia la discovery sul firmware (0x01), si iscrive alle NOTIFY
+  // e accumula i candidati {type, mac, rssi, name} nello store (dedup per MAC).
+  async function startSensorDiscovery(): Promise<void> {
+    const dev = deviceRef.current;
+    if (!dev) return;
+    const { clearDiscoveredSensors, addDiscoveredSensor } = useStore.getState();
+    clearDiscoveredSensors();
+    try {
+      sensorScanSub.current?.remove();
+      sensorScanSub.current = dev.monitorCharacteristicForService(
+        SVC, CHR_SENSOR_SCAN,
+        (err, c) => {
+          if (err || !c?.value) return;
+          const s = parseSensorScanEntry(c.value);
+          if (s) useStore.getState().addDiscoveredSensor(s);
+        }
+      );
+      const buf = Buffer.alloc(1);
+      buf.writeUInt8(0x01, 0);
+      await dev.writeCharacteristicWithResponseForService(
+        SVC, CHR_SENSOR_SCAN, buf.toString('base64')
+      );
+      // Safeguard lato app: il firmware auto-stoppa ~15 s, ma rimuoviamo la
+      // sottoscrizione comunque per non lasciare il monitor appeso.
+      if (sensorScanStop.current) clearTimeout(sensorScanStop.current);
+      sensorScanStop.current = setTimeout(() => { stopSensorDiscovery().catch(() => {}); }, 15000);
+    } catch {}
+  }
+
+  async function stopSensorDiscovery(): Promise<void> {
+    if (sensorScanStop.current) { clearTimeout(sensorScanStop.current); sensorScanStop.current = null; }
+    sensorScanSub.current?.remove();
+    sensorScanSub.current = null;
+    const dev = deviceRef.current;
+    if (!dev) return;
+    try {
+      const buf = Buffer.alloc(1);
+      buf.writeUInt8(0x00, 0);
+      await dev.writeCharacteristicWithResponseForService(
+        SVC, CHR_SENSOR_SCAN, buf.toString('base64')
+      );
+    } catch {}
+  }
+
   // WHEEL_CMD 0xaa0d: inoltra il comando coast-down al sensore ruota via firmware
   async function sendWheelCommand(cmd: number): Promise<boolean> {
     if (!deviceRef.current) return false;
@@ -584,14 +657,19 @@ export function useBLE() {
       disconnectSub.current = null;
       if (tickRef.current) clearInterval(tickRef.current);
       if (wheelFreshRef.current) clearTimeout(wheelFreshRef.current);
+      if (sensorScanStop.current) clearTimeout(sensorScanStop.current);
+      sensorScanSub.current?.remove();
+      sensorScanSub.current = null;
       manager.current?.destroy();
       manager.current = null;
     };
   }, [isSimMode]);
 
   // Registra le funzioni reali nell'API a livello modulo (per gli screen)
-  bleApi.syncSensorWhitelist = syncSensorWhitelist;
-  bleApi.sendWheelCommand    = sendWheelCommand;
+  bleApi.syncSensorWhitelist  = syncSensorWhitelist;
+  bleApi.sendWheelCommand     = sendWheelCommand;
+  bleApi.startSensorDiscovery = startSensorDiscovery;
+  bleApi.stopSensorDiscovery  = stopSensorDiscovery;
 
   return { syncConfigToDevice, syncSensorWhitelist, sendWheelCommand };
 }

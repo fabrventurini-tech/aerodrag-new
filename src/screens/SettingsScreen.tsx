@@ -12,7 +12,7 @@ import {
 import { QRPairScreen } from './QRPairScreen';
 import { CrrCalibrationScreen } from './CrrCalibrationScreen';
 import { bleApi } from '../hooks/useBLE';
-import { sensorPairing, DiscoveredSensor } from '../hooks/useSensorPairing';
+import { DiscoveredSensor } from '../security/pairing';
 import { Colors, Sp, Radius } from '../theme';
 
 const SENSOR_TYPE_LABEL: Record<SensorEntry['type'], string> = {
@@ -35,15 +35,15 @@ export function SettingsScreen() {
     calib, setCalib, isSimMode, setSimMode,
     setPairedDevice: setStorePairedDevice,
     wheelSensorStatus, wheelSensorId, crrCalib,
+    bleStatus, discoveredSensors,
   } = useStore();
 
   const [pairedDevice, setPairedDevice]   = useState<PairedDevice | null>(null);
   const [sensorList, setSensorList]       = useState<SensorEntry[]>([]);
   const [showScanner, setShowScanner]     = useState(false);
   const [showCrrCalib, setShowCrrCalib]   = useState(false);
-  // Pairing sensori esterni (scan-to-add → whitelist firmware 0xaa0b)
+  // Pairing sensori esterni: discovery pilotata dal firmware (0xaa0e, v0.2.2)
   const [showSensorScan, setShowSensorScan] = useState(false);
-  const [discovered, setDiscovered]         = useState<DiscoveredSensor[]>([]);
   const [scanning, setScanning]             = useState(false);
 
   useEffect(() => {
@@ -51,25 +51,24 @@ export function SettingsScreen() {
     loadSensorWhitelist().then(setSensorList);
   }, []);
 
-  // ── Pairing sensori esterni (broker) ───────────────────────────────────────
+  // ── Pairing sensori esterni — discovery via firmware (0xaa0e) ───────────────
   function openSensorScan() {
-    setDiscovered([]);
-    setScanning(true);
     setShowSensorScan(true);
-    sensorPairing.startScan(
-      (s) => setDiscovered((prev) => (prev.some((d) => d.id === s.id) ? prev : [...prev, s])),
-      () => setScanning(false),
-    );
+    setScanning(true);
+    bleApi.startSensorDiscovery();
+    // Il firmware auto-stoppa ~15 s: rifletti lo stato in UI.
+    setTimeout(() => setScanning(false), 15000);
   }
 
   function closeSensorScan() {
-    sensorPairing.stopScan();
+    bleApi.stopSensorDiscovery();
     setScanning(false);
     setShowSensorScan(false);
   }
 
   async function addDiscovered(s: DiscoveredSensor) {
-    await addSensorToWhitelist({ id: s.id, name: s.name, type: s.type });
+    // Il MAC arriva dal firmware (reale, iOS+Android) → autorizzabile sempre.
+    await addSensorToWhitelist({ id: s.mac, name: s.name, type: s.type });
     setSensorList(await loadSensorWhitelist());
     await bleApi.syncSensorWhitelist();   // riscrive la whitelist sul firmware
     closeSensorScan();
@@ -213,10 +212,10 @@ export function SettingsScreen() {
       <Text style={styles.sectionTitle}>Sensori esterni</Text>
       <View style={styles.card}>
         <Text style={styles.hint}>
-          Potenza, velocità/cadenza e cardio si collegano SOLO al device
-          AeroDrag (firmware): l'app autorizza i loro MAC scrivendo la whitelist
-          sul firmware (0xaa0b) e i dati arrivano dal device. Su iOS il MAC del
-          sensore non è leggibile dall'app — usa Android per il pairing.
+          Potenza, velocità/cadenza, cardio e sensore ruota si collegano SOLO al
+          device AeroDrag (firmware). La scansione la fa il device (vede i MAC
+          reali) e l'app autorizza i MAC scelti scrivendoli nella whitelist del
+          firmware (0xaa0b). Funziona su iOS e Android.
         </Text>
 
         {sensorList.length === 0 ? (
@@ -235,8 +234,14 @@ export function SettingsScreen() {
           ))
         )}
 
-        <TouchableOpacity style={styles.btnPair} onPress={openSensorScan}>
-          <Text style={styles.btnPairText}>+ Aggiungi sensore</Text>
+        <TouchableOpacity
+          style={[styles.btnPair, bleStatus !== 'connected' && styles.btnDisabled]}
+          onPress={openSensorScan}
+          disabled={bleStatus !== 'connected'}
+        >
+          <Text style={styles.btnPairText}>
+            {bleStatus === 'connected' ? '+ Aggiungi sensore' : 'Connetti il device per aggiungere'}
+          </Text>
         </TouchableOpacity>
         {sensorList.length > 0 && (
           <TouchableOpacity style={styles.dangerBtn} onPress={handleClearSensors}>
@@ -260,31 +265,32 @@ export function SettingsScreen() {
             </TouchableOpacity>
           </View>
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <Text style={styles.hint}>
+              La scansione la esegue il device AeroDrag (vede i MAC reali dei
+              sensori) e invia all'app i candidati — funziona su iOS e Android.
+            </Text>
             <View style={styles.row}>
               {scanning && <ActivityIndicator color={Colors.teal} />}
               <Text style={styles.hint}>
-                {scanning ? 'Ricerca sensori nelle vicinanze…' : 'Scansione terminata.'}
+                {scanning ? 'Ricerca sensori in corso…' : 'Scansione terminata.'}
               </Text>
             </View>
-            {discovered.length === 0 && !scanning && (
+            {discoveredSensors.length === 0 && !scanning && (
               <Text style={styles.emptyText}>Nessun sensore trovato.</Text>
             )}
-            {discovered.map((s) => {
-              const canAdd = Platform.OS === 'android';  // MAC disponibile solo su Android
-              return (
-                <View key={s.id} style={styles.sensorRow}>
-                  <View style={styles.sensorInfo}>
-                    <Text style={styles.sensorName}>{s.name}</Text>
-                    <Text style={styles.sensorType}>{SENSOR_TYPE_LABEL[s.type]} · {s.id}</Text>
-                  </View>
-                  <TouchableOpacity onPress={() => canAdd && addDiscovered(s)} disabled={!canAdd}>
-                    <Text style={[styles.btnPairText, !canAdd && { color: Colors.muted }]}>
-                      {canAdd ? 'Autorizza' : 'MAC n/d (iOS)'}
-                    </Text>
-                  </TouchableOpacity>
+            {discoveredSensors.map((s) => (
+              <View key={s.mac} style={styles.sensorRow}>
+                <View style={styles.sensorInfo}>
+                  <Text style={styles.sensorName}>{s.name}</Text>
+                  <Text style={styles.sensorType}>
+                    {SENSOR_TYPE_LABEL[s.type]} · {s.mac} · {s.rssi} dBm
+                  </Text>
                 </View>
-              );
-            })}
+                <TouchableOpacity onPress={() => addDiscovered(s)}>
+                  <Text style={styles.btnPairText}>Autorizza</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
           </ScrollView>
         </View>
       </Modal>
