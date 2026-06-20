@@ -4,6 +4,7 @@ import {
   TouchableOpacity, TextInput, Alert,
 } from 'react-native';
 import { useStore, AthleteProfile } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { Colors, Sp, Radius } from '../theme';
 
 function generateId(): string {
@@ -20,7 +21,11 @@ export function AthletesScreen() {
   const {
     athleteProfiles, activeAthleteId,
     saveAthleteProfile, deleteAthleteProfile, setActiveAthlete,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    athleteProfiles: s.athleteProfiles, activeAthleteId: s.activeAthleteId,
+    saveAthleteProfile: s.saveAthleteProfile, deleteAthleteProfile: s.deleteAthleteProfile,
+    setActiveAthlete: s.setActiveAthlete,
+  })));
 
   const [editing, setEditing]       = useState<AthleteProfile | null>(null);
   const [name, setName]             = useState('');

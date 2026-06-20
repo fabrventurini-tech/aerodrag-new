@@ -4,6 +4,7 @@ import {
   TextInput, TouchableOpacity,
 } from 'react-native';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { coachConnect, coachDisconnect, loadCoachUrl, saveCoachUrl } from '../coach/link';
 import { Colors, Sp, Radius } from '../theme';
 
@@ -18,7 +19,12 @@ export function CoachScreen() {
     activeAthleteId, athleteProfiles,
     batteryPct, currentLap,
     coachStatus: status, coachErrorMsg: errorMsg,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    physics: s.physics, sensor: s.sensor, history: s.history, isRecording: s.isRecording,
+    activeAthleteId: s.activeAthleteId, athleteProfiles: s.athleteProfiles,
+    batteryPct: s.batteryPct, currentLap: s.currentLap,
+    coachStatus: s.coachStatus, coachErrorMsg: s.coachErrorMsg,
+  })));
 
   // Mostra l'URL salvato (la connessione parte già da App via coachAutoConnect)
   useEffect(() => {
