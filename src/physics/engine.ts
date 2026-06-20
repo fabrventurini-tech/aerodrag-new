@@ -113,8 +113,9 @@ export function computePhysics(
   // azzera l'output; l'app lo tratta come fisica assente)
   if (cda < 0.1 || cda > 0.6) return INVALID;
 
-  // pctAero come sul device: percentuale intera 0–100 (uint8)
-  const pctAero = s.powerW > 0 ? Math.floor(clamp((pAero / s.powerW) * 100, 0, 100)) : 0;
+  // pctAero continuo 0–100 come il modello canonico §6 (link.ts arrotonda a 1
+  // decimale sul wire); il device lo tronca a uint8, qui restiamo continui.
+  const pctAero = s.powerW > 0 ? clamp((pAero / s.powerW) * 100, 0, 100) : 0;
 
   return {
     cda,

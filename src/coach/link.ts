@@ -94,9 +94,11 @@ function startDataLoop(): void {
     const athleteName = profiles.find((x) => x.id === aid)?.name ?? 'Atleta';
     // vento = velocità aria relativa − velocità a terra (componente frontale)
     const wind = Math.max(0, +(p.vAirMs - s.speedMs).toFixed(2));
-    // lapEvent: true solo sul primo frame dopo un cambio giro (il Pi lo usa
-    // come marker di giro). prevLapSent traccia l'ultimo giro notificato.
-    const lapEvent = lap !== prevLapSent;
+    // lapEvent: true solo sul primo frame dopo un INCREMENTO di giro (il Pi lo
+    // usa come marker). Usiamo `>` e non `!==`: a un restart sessione currentLap
+    // torna a 1 (< prevLapSent) → niente lapEvent spurio (§3: "una sola volta
+    // al cambio giro"). prevLapSent traccia comunque l'ultimo giro inviato.
+    const lapEvent = lap > prevLapSent;
     prevLapSent = lap;
 
     ws.send(JSON.stringify({

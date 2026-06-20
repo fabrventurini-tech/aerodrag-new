@@ -158,7 +158,7 @@ function parseWheelStream(b64: string) {
 }
 
 // SENSOR_SCAN 0xaa0e (NOTIFY, contract v0.2.2): una entry per sensore scoperto
-// dal firmware. type(1) + mac[6] big-endian + rssi(int8) + nameLen(1) + name.
+// dal firmware. type(1) + mac[6] display-order + rssi(int8) + nameLen(1) + name.
 function parseSensorScanEntry(b64: string): DiscoveredSensor | null {
   const buf = Buffer.from(b64, 'base64');
   if (buf.length < 9) return null;
@@ -463,7 +463,8 @@ export function useBLE() {
   // ── Whitelist sensori → SENSOR_WHITELIST 0xaa0b (contract v0.2.0 §2) ────────
   // L'app è broker di pairing: scrive sul firmware l'elenco dei sensori
   // autorizzati (power/csc/hr). Il central del firmware si connette SOLO a
-  // questi MAC. Payload: [count] + count×([type][mac0..5]) big-endian.
+  // questi MAC. Payload: [count] + count×([type][mac0..5]) in display order
+  // (mac[0]=primo ottetto del MAC, contract v0.2.3 §2).
   // I sensori senza MAC valido (es. iOS, dove l'id BLE è un UUID) vengono
   // esclusi: non possono essere inseriti nella whitelist (vedi seam #14).
   async function writeSensorWhitelist(device: Device): Promise<void> {

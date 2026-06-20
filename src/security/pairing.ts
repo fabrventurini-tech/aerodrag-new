@@ -325,10 +325,11 @@ export interface DiscoveredSensor {
   rssi: number;
 }
 
-// Converte "AA:BB:CC:DD:EE:FF" nei 6 byte big-endian attesi dal firmware
-// (mac[0]=0xAA). Ritorna null se non è un MAC valido — es. su iOS, dove
-// l'id di connessione BLE è un UUID e non il MAC hardware: in quel caso il
-// sensore non può essere inserito nella whitelist (vedi seam #14).
+// Converte "AA:BB:CC:DD:EE:FF" nei 6 byte in DISPLAY ORDER attesi dal firmware
+// (contract v0.2.3 §2): mac[0] = primo ottetto (0xAA), mac[5] = ultimo (0xFF).
+// NON è l'ordine little-endian dello stack BLE (il firmware converte internamente).
+// Ritorna null se non è un MAC valido — es. su iOS, dove l'id di connessione BLE
+// è un UUID e non il MAC hardware.
 export function macToWhitelistBytes(mac: string): number[] | null {
   if (!isValidMAC(mac)) return null;
   return mac.split(':').map((h) => parseInt(h, 16));

@@ -61,8 +61,11 @@ export interface CrrCalibResult {
 // ── Algoritmo principale ──────────────────────────────────────────────────────
 
 /**
- * Estrae il Crr da un singolo run coast-down.
- * Usa regressione lineare sul modello a(v) = -Crr·g - k_aero·v²
+ * Estrae il Crr da un singolo run coast-down con una vera regressione ai
+ * minimi quadrati sul modello  a(v) = -c1 - c2·v²  (y = -a = c1 + c2·v²):
+ *   c1 = Crr·g·cosθ + g·sinθ   (rolling + gravità lungo la pendenza)
+ *   c2 = ρ·CdA / (2·m)         (termine aerodinamico)
+ * Crr si ricava da c1 al netto della pendenza; R² dai residui del fit.
  */
 export function fitCrrFromRun(
   samples: WheelSample[],
@@ -75,6 +78,8 @@ export function fitCrrFromRun(
 
   const minSpeed = params.minSpeedMs ?? 2.0;
   const slopeRad = (params.slopeDeg * Math.PI) / 180;
+  const cosT = Math.cos(slopeRad);
+  const sinT = Math.sin(slopeRad);
 
   // Filtra campioni validi: decelerazione reale e velocità > soglia
   const valid = samples.filter(
@@ -82,27 +87,42 @@ export function fitCrrFromRun(
   );
   if (valid.length < 15) return INVALID;
 
-  const k_aero = params.cdaM2 > 0
-    ? (params.rhoKgM3 * params.cdaM2) / (2 * params.massKg)
-    : 0;
+  // Regressione minimi quadrati  y = c1 + c2·x  con x = v², y = -a (decel > 0)
+  const n   = valid.length;
+  let Sx = 0, Sy = 0, Sxx = 0, Sxy = 0;
+  for (const s of valid) {
+    const x = s.speedMs * s.speedMs;
+    const y = -s.accelMs2;
+    Sx += x; Sy += y; Sxx += x * x; Sxy += x * y;
+  }
+  const denom = n * Sxx - Sx * Sx;
 
-  const crrValues = valid.map((s) => {
-    // a_corretto = a + k_aero·v² + g·sin(θ) → quello che Crr·g deve spiegare
-    const a_corrected = s.accelMs2 + k_aero * s.speedMs * s.speedMs + G * Math.sin(slopeRad);
-    return -a_corrected / (G * Math.cos(slopeRad));
-  });
+  let c1: number;   // termine costante (rolling + gravità)
+  let c2: number;   // pendenza in v² (aero = ρ·CdA/2m)
+  if (Math.abs(denom) > 1e-9) {
+    c2 = (n * Sxy - Sx * Sy) / denom;
+    // L'aero non può essere negativa: se la regressione la spinge < 0 (rumore /
+    // poco spread in v²), la fissiamo a 0 e ri-stimiamo il solo termine costante.
+    if (c2 < 0) { c2 = 0; c1 = Sy / n; }
+    else        { c1 = (Sy - c2 * Sx) / n; }
+  } else {
+    // Spread in v² insufficiente: usa il CdA noto per l'aero, media per il resto
+    c2 = params.cdaM2 > 0 ? (params.rhoKgM3 * params.cdaM2) / (2 * params.massKg) : 0;
+    c1 = (Sy - c2 * Sx) / n;
+  }
 
-  const crr = crrValues.reduce((s, x) => s + x, 0) / crrValues.length;
+  // Crr dal termine costante, al netto della pendenza
+  const crr = (c1 - G * sinT) / (G * cosT);
 
-  // Bontà del fit: confronta la decelerazione predetta con quella misurata
-  const meanA = valid.reduce((s, x) => s + x.accelMs2, 0) / valid.length;
-  const ssTot = valid.reduce((s, x) => s + (x.accelMs2 - meanA) ** 2, 0);
-  const ssRes = valid.reduce((s, x) => {
-    const predicted = -crr * G * Math.cos(slopeRad)
-      - k_aero * x.speedMs * x.speedMs
-      - G * Math.sin(slopeRad);
-    return s + (x.accelMs2 - predicted) ** 2;
-  }, 0);
+  // Bontà del fit: R² dai residui di y rispetto al modello (c1 + c2·x)
+  const meanY = Sy / n;
+  let ssTot = 0, ssRes = 0;
+  for (const s of valid) {
+    const x = s.speedMs * s.speedMs;
+    const y = -s.accelMs2;
+    ssTot += (y - meanY) ** 2;
+    ssRes += (y - (c1 + c2 * x)) ** 2;
+  }
   const rSquared = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 0;
 
   const avgTempC = valid.reduce((s, x) => s + x.tempC, 0) / valid.length;
