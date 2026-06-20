@@ -32,8 +32,9 @@
 
 import { useEffect, useRef } from 'react';
 import { Platform, PermissionsAndroid } from 'react-native';
-import { BleManager, Device, Subscription } from 'react-native-ble-plx';
+import { Device, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
+import { bleManager } from '../ble/manager';
 import { useStore } from '../store';
 import { PhysicsOutput } from '../physics/engine';
 
@@ -130,13 +131,13 @@ function utf8Truncate(s: string, maxBytes: number): Buffer {
 // ── Hook principale ───────────────────────────────────────────────────────────
 
 export function useBLE() {
-  const manager        = useRef<BleManager | null>(null);
   const deviceRef      = useRef<Device | null>(null);
   const tickRef        = useRef<ReturnType<typeof setInterval> | null>(null);
   const antPollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const subs           = useRef<Subscription[]>([]);
   const disconnectSub  = useRef<Subscription | null>(null);
   const pairedIdRef    = useRef<string | null>(null);
+  const lastSentNameRef = useRef<string | null>(null);  // dedup IDENTITY (#11)
 
   const {
     setBleStatus, setBattery, updateSensors, setPhysicsFromDevice,
@@ -153,11 +154,14 @@ export function useBLE() {
     if (!deviceRef.current) return;
     const profile = athleteProfiles.find((p) => p.id === activeAthleteId);
     if (!profile?.name) return;
+    // Scrive solo se il nome è cambiato rispetto all'ultimo inviato (#11)
+    if (profile.name === lastSentNameRef.current) return;
     // Troncamento a 31 byte al confine di carattere UTF-8
     const nameBytes = utf8Truncate(profile.name, 31);
+    lastSentNameRef.current = profile.name;
     deviceRef.current.writeCharacteristicWithResponseForService(
       SVC, CHR_IDENTITY, nameBytes.toString('base64')
-    ).catch(() => {});
+    ).catch(() => { lastSentNameRef.current = null; });
   }, [activeAthleteId, athleteProfiles]);
 
   // ── Permessi Android ───────────────────────────────────────────────────────
@@ -257,6 +261,12 @@ export function useBLE() {
       // MTU ≥ 53 obbligatorio: PHYSICS (28 B) e READ IDENTITY (50 B)
       // arriverebbero troncate con l'MTU default di 23
       const connected = await device.connect({ autoConnect: false, requestMTU: 185 });
+      // Negozia esplicitamente l'MTU su Android: la richiesta in connect() può
+      // venire ignorata da alcuni stack BLE. Senza MTU ≥ 53 le READ/NOTIFY di
+      // PHYSICS (28 B) e IDENTITY (50 B) si troncano. Procedi anche se fallisce.
+      if (Platform.OS === 'android') {
+        try { await connected.requestMTU(185); } catch {}
+      }
       await connected.discoverAllServicesAndCharacteristics();
       deviceRef.current = connected;
       setBleStatus('connected');
@@ -290,6 +300,7 @@ export function useBLE() {
           await connected.writeCharacteristicWithResponseForService(
             SVC, CHR_IDENTITY, nameBytes.toString('base64')
           );
+          lastSentNameRef.current = athleteName;  // dedup (#11)
         } catch {}
       }
 
@@ -308,6 +319,7 @@ export function useBLE() {
         cleanupSubs();
         stopAntPolling();
         deviceRef.current = null;
+        lastSentNameRef.current = null;  // reset dedup IDENTITY (#11)
         setBleStatus('scanning');
         startScan();
       });
@@ -346,10 +358,9 @@ export function useBLE() {
 
   // ── Scan ───────────────────────────────────────────────────────────────────
   function startScan() {
-    if (!manager.current) return;
     setBleStatus('scanning');
 
-    manager.current.startDeviceScan(
+    bleManager.startDeviceScan(
       [SVC],
       { allowDuplicates: false },
       (err, device) => {
@@ -360,7 +371,7 @@ export function useBLE() {
         const pid = pairedIdRef.current;
         if (pid && device.id !== pid) return;
 
-        manager.current?.stopDeviceScan();
+        bleManager.stopDeviceScan();
         connect(device);
       }
     );
@@ -409,9 +420,7 @@ export function useBLE() {
       };
     }
 
-    manager.current = new BleManager();
-
-    const sub = manager.current.onStateChange((state) => {
+    const sub = bleManager.onStateChange((state) => {
       if (state === 'PoweredOn') {
         sub.remove();
         requestPermissions().then((ok) => {
@@ -422,13 +431,14 @@ export function useBLE() {
     }, true);
 
     return () => {
+      // NB: il BleManager è condiviso (src/ble/manager.ts) — NON va distrutto qui.
+      sub.remove();
+      bleManager.stopDeviceScan();
       cleanupSubs();
       stopAntPolling();
       disconnectSub.current?.remove();
       disconnectSub.current = null;
       if (tickRef.current) clearInterval(tickRef.current);
-      manager.current?.destroy();
-      manager.current = null;
     };
   }, [isSimMode]);
 

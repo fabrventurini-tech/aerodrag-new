@@ -35,8 +35,9 @@
 
 import { useEffect, useRef } from 'react';
 import { Platform, PermissionsAndroid } from 'react-native';
-import { BleManager, Device, Subscription } from 'react-native-ble-plx';
+import { Device, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
+import { bleManager } from '../ble/manager';
 import { useStore } from '../store';
 import {
   loadPreferredWheelSensor, saveWheelSensor, loadActiveWheelSensorId,
@@ -47,7 +48,6 @@ import {
 
 const SVC_WHEEL    = '0000bb00-0000-1000-8000-00805f9b34fb';
 const CHR_STREAM   = '0000bb01-0000-1000-8000-00805f9b34fb';
-const CHR_CRR_RES  = '0000bb02-0000-1000-8000-00805f9b34fb';
 const CHR_CMD      = '0000bb03-0000-1000-8000-00805f9b34fb';
 const CHR_CONFIG   = '0000bb04-0000-1000-8000-00805f9b34fb';
 
@@ -80,20 +80,9 @@ function parseStream(b64: string) {
   };
 }
 
-function parseCrrResult(b64: string) {
-  const buf = Buffer.from(b64, 'base64');
-  if (buf.length < 6) return null;  // pacchetto troncato → scarta
-  return {
-    crr:      buf.readFloatLE(0),
-    quality:  buf.readUInt8(4),   // 0-100
-    runIndex: buf.readUInt8(5),   // 0-based run index
-  };
-}
-
 // ── Hook principale ───────────────────────────────────────────────────────────
 
 export function useWheelSensor() {
-  const manager            = useRef<BleManager | null>(null);
   const deviceRef          = useRef<Device | null>(null);
   const subs               = useRef<Subscription[]>([]);
   const disconnectSub      = useRef<Subscription | null>(null);
@@ -105,7 +94,6 @@ export function useWheelSensor() {
     setWheelSensorStatus,
     setWheelSensorId,
     updateWheelStream,
-    onCrrRunComplete,
     isSimMode,
     wheelSensorId,
   } = useStore();
@@ -161,10 +149,9 @@ export function useWheelSensor() {
       const s = parseStream(v);
       if (s) updateWheelStream(s);
     });
-    sub(CHR_CRR_RES, (v) => {
-      const r = parseCrrResult(v);
-      if (r) onCrrRunComplete(r);
-    });
+    // 0xBB02 (CHR_CRR_RES): il firmware notifica un risultato Crr parziale, ma
+    // l'app calcola il Crr in autonomia (fitCrrFromRun) — nessuna sottoscrizione
+    // per non decodificare invano. Vedi onCrrRunComplete (no-op) nello store.
   }
 
   // ── Connessione ────────────────────────────────────────────────────────────
@@ -215,11 +202,11 @@ export function useWheelSensor() {
   // Se è impostato un preferred device lo connette per primo, ma non blocca
   // la connessione ad altri sensori se il preferito non è visibile.
   function startScan() {
-    if (!manager.current || scanStartedRef.current) return;
+    if (scanStartedRef.current) return;
     scanStartedRef.current = true;
     setWheelSensorStatus('scanning');
 
-    manager.current.startDeviceScan(
+    bleManager.startDeviceScan(
       [SVC_WHEEL],
       { allowDuplicates: false },
       (err: Error | null, device: Device | null) => {
@@ -233,7 +220,7 @@ export function useWheelSensor() {
         // il sensore preferito è solo momentaneamente fuori portata.
         if (preferred && device.id !== preferred) return;
 
-        manager.current?.stopDeviceScan();
+        bleManager.stopDeviceScan();
         scanStartedRef.current = false;
         connect(device);
       }
@@ -245,7 +232,7 @@ export function useWheelSensor() {
         fallbackTimeoutRef.current = null;
         if (!deviceRef.current && scanStartedRef.current) {
           // Rilancia scan senza filtro preferred
-          manager.current?.stopDeviceScan();
+          bleManager.stopDeviceScan();
           scanStartedRef.current = false;
           startScanAny();
         }
@@ -255,16 +242,16 @@ export function useWheelSensor() {
 
   // Scan senza filtro preferred (fallback o primo accoppiamento)
   function startScanAny() {
-    if (!manager.current || scanStartedRef.current) return;
+    if (scanStartedRef.current) return;
     scanStartedRef.current = true;
 
-    manager.current.startDeviceScan(
+    bleManager.startDeviceScan(
       [SVC_WHEEL],
       { allowDuplicates: false },
       (err: Error | null, device: Device | null) => {
         if (err) { setWheelSensorStatus('error'); return; }
         if (!device) return;
-        manager.current?.stopDeviceScan();
+        bleManager.stopDeviceScan();
         scanStartedRef.current = false;
         connect(device);
       }
@@ -333,8 +320,7 @@ export function useWheelSensor() {
       return cleanup;
     }
 
-    manager.current = new BleManager();
-    const sub = manager.current.onStateChange((state: string) => {
+    const sub = bleManager.onStateChange((state: string) => {
       if (state === 'PoweredOn') {
         sub.remove();
         requestPermissions().then((ok) => {
@@ -345,6 +331,9 @@ export function useWheelSensor() {
     }, true);
 
     return () => {
+      // NB: il BleManager è condiviso (src/ble/manager.ts) — NON va distrutto qui.
+      sub.remove();
+      bleManager.stopDeviceScan();
       cleanupSubs();
       disconnectSub.current?.remove();
       disconnectSub.current = null;
@@ -352,16 +341,17 @@ export function useWheelSensor() {
         clearTimeout(fallbackTimeoutRef.current);
         fallbackTimeoutRef.current = null;
       }
-      manager.current?.destroy();
-      manager.current = null;
       scanStartedRef.current = false;
     };
   }, [isSimMode]);
 
-  // Registra le funzioni reali nell'API a livello modulo (per gli screen)
-  wheelSensorApi.sendCommand  = sendCommand;
-  wheelSensorApi.writeConfig  = writeConfig;
-  wheelSensorApi.setPreferred = (id) => { preferredIdRef.current = id; };
+  // Registra le funzioni reali nell'API a livello modulo (per gli screen).
+  // In un useEffect per non riassegnare ad ogni render (#19).
+  useEffect(() => {
+    wheelSensorApi.sendCommand  = sendCommand;
+    wheelSensorApi.writeConfig  = writeConfig;
+    wheelSensorApi.setPreferred = (id) => { preferredIdRef.current = id; };
+  });
 
   return { sendCommand, writeConfig };
 }

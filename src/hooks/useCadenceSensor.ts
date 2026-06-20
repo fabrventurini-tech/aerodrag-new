@@ -24,8 +24,9 @@
 
 import { useEffect, useRef } from 'react';
 import { Platform, PermissionsAndroid } from 'react-native';
-import { BleManager, Device, Subscription } from 'react-native-ble-plx';
+import { Device, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
+import { bleManager } from '../ble/manager';
 import { useStore } from '../store';
 import {
   loadPreferredCadenceSensor,
@@ -79,7 +80,6 @@ function readCscFeatureCrank(b64: string): boolean {
 // ── Hook principale ───────────────────────────────────────────────────────────
 
 export function useCadenceSensor() {
-  const manager            = useRef<BleManager | null>(null);
   const deviceRef          = useRef<Device | null>(null);
   const subs               = useRef<Subscription[]>([]);
   const disconnectSub      = useRef<Subscription | null>(null);
@@ -120,8 +120,11 @@ export function useCadenceSensor() {
   useEffect(() => { preferredIdRef.current   = cadenceSensorId; }, [cadenceSensorId]);
   useEffect(() => { wheelSensorIdRef.current = wheelSensorId;   }, [wheelSensorId]);
 
-  // Registra il setter nell'API a livello modulo (per SettingsScreen)
-  cadenceSensorApi.setPreferred = (id) => { preferredIdRef.current = id; };
+  // Registra il setter nell'API a livello modulo (per SettingsScreen).
+  // In un useEffect per non riassegnare ad ogni render (#19).
+  useEffect(() => {
+    cadenceSensorApi.setPreferred = (id) => { preferredIdRef.current = id; };
+  });
 
   // ── Permessi ───────────────────────────────────────────────────────────────
   async function requestPermissions(): Promise<boolean> {
@@ -144,6 +147,13 @@ export function useCadenceSensor() {
 
   // ── Calcolo cadenza da dati CSC ────────────────────────────────────────────
   function processCrankData(cumRevs: number, eventTime: number) {
+    // Watchdog: riarma ad OGNI notifica ricevuta (anche senza nuova rivoluzione),
+    // così 3 s di silenzio totale del sensore azzerano la cadenza (#3).
+    if (cadenceTimeoutRef.current) clearTimeout(cadenceTimeoutRef.current);
+    cadenceTimeoutRef.current = setTimeout(() => {
+      updateSensors({ cadenceRpm: 0 });
+    }, 3000);
+
     if (prevCrankRevRef.current < 0) {
       // Prima lettura: salva stato senza calcolare
       prevCrankRevRef.current  = cumRevs;
@@ -162,12 +172,6 @@ export function useCadenceSensor() {
 
     // deltaTime è in unità di 1/1024 s → cadence = (rev/s) × 60
     const cadenceRpm = Math.min(Math.round((deltaRevs * 1024 * 60) / deltaTime), 250);
-
-    // Timeout: 3 s senza nuovi eventi → cadenza a 0 (pedalata ferma)
-    if (cadenceTimeoutRef.current) clearTimeout(cadenceTimeoutRef.current);
-    cadenceTimeoutRef.current = setTimeout(() => {
-      updateSensors({ cadenceRpm: 0 });
-    }, 3000);
 
     updateSensors({ cadenceRpm });
   }
@@ -240,11 +244,11 @@ export function useCadenceSensor() {
 
   // ── Scan (preferito prima) ─────────────────────────────────────────────────
   function startScan() {
-    if (!manager.current || scanStartedRef.current) return;
+    if (scanStartedRef.current) return;
     scanStartedRef.current = true;
     setCadenceSensorStatus('scanning');
 
-    manager.current.startDeviceScan(
+    bleManager.startDeviceScan(
       [SVC_CSC],
       { allowDuplicates: false },
       (err: Error | null, device: Device | null) => {
@@ -258,7 +262,7 @@ export function useCadenceSensor() {
         if (device.id === wheelSensorIdRef.current) return;
         if (rejectedIdsRef.current.has(device.id)) return;
 
-        manager.current?.stopDeviceScan();
+        bleManager.stopDeviceScan();
         scanStartedRef.current = false;
         connect(device);
       }
@@ -269,7 +273,7 @@ export function useCadenceSensor() {
       fallbackTimeoutRef.current = setTimeout(() => {
         fallbackTimeoutRef.current = null;
         if (!deviceRef.current && scanStartedRef.current) {
-          manager.current?.stopDeviceScan();
+          bleManager.stopDeviceScan();
           scanStartedRef.current = false;
           startScanAny();
         }
@@ -279,10 +283,10 @@ export function useCadenceSensor() {
 
   // Scan senza filtro preferred (fallback / primo accoppiamento)
   function startScanAny() {
-    if (!manager.current || scanStartedRef.current) return;
+    if (scanStartedRef.current) return;
     scanStartedRef.current = true;
 
-    manager.current.startDeviceScan(
+    bleManager.startDeviceScan(
       [SVC_CSC],
       { allowDuplicates: false },
       (err: Error | null, device: Device | null) => {
@@ -290,7 +294,7 @@ export function useCadenceSensor() {
         if (!device) return;
         if (device.id === wheelSensorIdRef.current) return;
         if (rejectedIdsRef.current.has(device.id)) return;
-        manager.current?.stopDeviceScan();
+        bleManager.stopDeviceScan();
         scanStartedRef.current = false;
         connect(device);
       }
@@ -307,8 +311,7 @@ export function useCadenceSensor() {
   useEffect(() => {
     if (isSimMode) return; // la simulazione è gestita in useBLE (cadenceRpm sintetica)
 
-    manager.current = new BleManager();
-    const sub = manager.current.onStateChange((state: string) => {
+    const sub = bleManager.onStateChange((state: string) => {
       if (state === 'PoweredOn') {
         sub.remove();
         requestPermissions().then((ok) => {
@@ -319,6 +322,9 @@ export function useCadenceSensor() {
     }, true);
 
     return () => {
+      // NB: il BleManager è condiviso (src/ble/manager.ts) — NON va distrutto qui.
+      sub.remove();
+      bleManager.stopDeviceScan();
       cleanupSubs();
       disconnectSub.current?.remove();
       disconnectSub.current = null;
@@ -327,8 +333,6 @@ export function useCadenceSensor() {
         clearTimeout(fallbackTimeoutRef.current);
         fallbackTimeoutRef.current = null;
       }
-      manager.current?.destroy();
-      manager.current = null;
       scanStartedRef.current = false;
     };
   }, [isSimMode]);
