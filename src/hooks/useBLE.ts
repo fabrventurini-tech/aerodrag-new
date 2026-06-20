@@ -242,8 +242,14 @@ export function useBLE() {
     activeAthleteId: s.activeAthleteId, athleteProfiles: s.athleteProfiles,
   })));
 
-  // Sync ref → leggi sempre il valore corrente nello scan callback
-  useEffect(() => { pairedIdRef.current = pairedDeviceId; }, [pairedDeviceId]);
+  // Sync ref → leggi sempre il valore corrente nello scan callback. Al cambio
+  // di device accoppiato azzera anche i ref di pairing (id nativo confermato e
+  // scartati): altrimenti su iOS si potrebbe restare agganciati al device vecchio.
+  useEffect(() => {
+    pairedIdRef.current = pairedDeviceId;
+    confirmedNativeIdRef.current = null;
+    rejectedIdsRef.current.clear();
+  }, [pairedDeviceId]);
 
   // Re-scrive il nome atleta su CHR_IDENTITY quando i profili sono caricati dopo
   // la connessione BLE (risolve il race condition tra connect() e loadAthleteProfiles())
@@ -695,11 +701,15 @@ export function useBLE() {
     };
   }, [isSimMode]);
 
-  // Registra le funzioni reali nell'API a livello modulo (per gli screen)
-  bleApi.syncSensorWhitelist  = syncSensorWhitelist;
-  bleApi.sendWheelCommand     = sendWheelCommand;
-  bleApi.startSensorDiscovery = startSensorDiscovery;
-  bleApi.stopSensorDiscovery  = stopSensorDiscovery;
+  // Registra le funzioni reali nell'API a livello modulo (per gli screen).
+  // In un effect (non nel corpo del render): le funzioni chiudono solo su ref
+  // stabili e useStore.getState(), quindi basta registrarle al mount.
+  useEffect(() => {
+    bleApi.syncSensorWhitelist  = syncSensorWhitelist;
+    bleApi.sendWheelCommand     = sendWheelCommand;
+    bleApi.startSensorDiscovery = startSensorDiscovery;
+    bleApi.stopSensorDiscovery  = stopSensorDiscovery;
+  }, []);
 
   return { syncConfigToDevice, syncSensorWhitelist, sendWheelCommand };
 }
