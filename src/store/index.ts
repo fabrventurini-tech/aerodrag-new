@@ -184,7 +184,6 @@ interface AeroDragStore {
   setWheelSensorStatus: (s: AeroDragStore['wheelSensorStatus']) => void;
   setWheelSensorId:     (id: string | null) => void;
   updateWheelStream:    (s: WheelStream) => void;
-  onCrrRunComplete:     (result: { crr: number; quality: number; runIndex: number }) => void;
 
   // Actions BLE sensore cadenza
   setCadenceSensorStatus: (s: AeroDragStore['cadenceSensorStatus']) => void;
@@ -202,7 +201,6 @@ interface AeroDragStore {
   setCrrTargetSpeed: (kmh: number) => void;
   readyForSpinup:   () => void;
   startCrrRun:      () => void;
-  addCrrSample:     (s: WheelSample) => void;
   finalizeCrrRun:   () => void;
   applyCrrResult:   () => void;
   resetCrrCalib:    () => void;
@@ -309,11 +307,6 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     }
   },
 
-  onCrrRunComplete: ({ crr, quality, runIndex }) => {
-    // Riceve il risultato parziale dal firmware (opzionale, l'app calcola comunque)
-    // Solo per aggiornamento UI rapido
-  },
-
   // ── Calibrazione Crr ───────────────────────────────────────────────────────
   startCrrCalib: (protocol) => {
     set({
@@ -347,14 +340,6 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     }));
   },
 
-  addCrrSample: (s) => {
-    set((st) => ({
-      crrCalib: {
-        ...st.crrCalib,
-        activeSamples: [...st.crrCalib.activeSamples, s],
-      },
-    }));
-  },
 
   finalizeCrrRun: () => {
     const { crrCalib, calib, physics, athleteProfiles, activeAthleteId } = get();
@@ -573,7 +558,9 @@ export const useStore = create<AeroDragStore>((set, get) => ({
         const parsed = JSON.parse(raw);
         // Migrazione da massKg unico a massRiderKg + massBikeKg
         if (parsed.massKg !== undefined && parsed.massRiderKg === undefined) {
-          parsed.massRiderKg = Math.max(parsed.massKg - 8, 40);
+          // massa rider = totale − bici(8); floor 30 kg (min UI), non 40:
+          // con floor 40 una massa totale < 48 kg dava un rider sovrastimato.
+          parsed.massRiderKg = Math.max(parsed.massKg - 8, 30);
           parsed.massBikeKg  = 8;
           delete parsed.massKg;
         }
@@ -590,7 +577,7 @@ export const useStore = create<AeroDragStore>((set, get) => ({
         const profiles = (JSON.parse(raw) as any[]).map((p) => {
           // Migrazione da massKg unico a massRiderKg + massBikeKg
           if (p.massKg !== undefined && p.massRiderKg === undefined) {
-            return { ...p, massRiderKg: Math.max(p.massKg - 8, 40), massBikeKg: 8 };
+            return { ...p, massRiderKg: Math.max(p.massKg - 8, 30), massBikeKg: 8 };
           }
           return p;
         });

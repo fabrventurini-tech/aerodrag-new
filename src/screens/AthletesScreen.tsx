@@ -8,7 +8,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { Colors, Sp, Radius } from '../theme';
 
 function generateId(): string {
-  return Math.random().toString(36).slice(2, 10);
+  // timestamp (monotono) + random → evita collisioni del solo Math.random
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // La tastiera decimal-pad italiana inserisce la virgola: parseFloat("72,5")

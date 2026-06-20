@@ -192,6 +192,7 @@ export function coachConnect(targetUrl: string): void {
 export function coachDisconnect(): void {
   manualDisconnect = true;
   clearTimers();
+  if (storeUnsub) { storeUnsub(); storeUnsub = null; }   // evita leak della subscription
   if (ws) {
     ws.onclose = null;
     ws.onerror = null;
