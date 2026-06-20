@@ -4,6 +4,7 @@ import {
   TouchableOpacity, Alert,
 } from 'react-native';
 import { useStore, LapStats } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { Colors, Sp, Radius } from '../theme';
 
 function fmt(n: number, d = 2): string {
@@ -65,7 +66,10 @@ function LapRow({ lap }: { lap: LapStats }) {
 }
 
 export function SessionScreen() {
-  const { history, laps, isRecording, previousSessions } = useStore();
+  const { history, laps, isRecording, previousSessions } = useStore(useShallow((s) => ({
+    history: s.history, laps: s.laps, isRecording: s.isRecording,
+    previousSessions: s.previousSessions,
+  })));
 
   const cdaValues   = history.map((p) => p.physics.cda).filter((v) => v > 0);
   const powerValues = history.map((p) => p.sensor.powerW).filter((v) => v > 0);

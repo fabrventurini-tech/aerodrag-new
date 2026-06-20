@@ -39,6 +39,7 @@ import { Platform, PermissionsAndroid } from 'react-native';
 import { BleManager, Device, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { PhysicsOutput } from '../physics/engine';
 import {
   isValidMAC, loadSensorWhitelist, macToWhitelistBytes,
@@ -232,7 +233,14 @@ export function useBLE() {
     setDeviceIdentity, updateWheelStream, setWheelSensorStatus,
     tick, isSimMode, pairedDeviceId,
     activeAthleteId, athleteProfiles,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    setBleStatus: s.setBleStatus, setBattery: s.setBattery,
+    updateSensors: s.updateSensors, setPhysicsFromDevice: s.setPhysicsFromDevice,
+    setDeviceIdentity: s.setDeviceIdentity, updateWheelStream: s.updateWheelStream,
+    setWheelSensorStatus: s.setWheelSensorStatus,
+    tick: s.tick, isSimMode: s.isSimMode, pairedDeviceId: s.pairedDeviceId,
+    activeAthleteId: s.activeAthleteId, athleteProfiles: s.athleteProfiles,
+  })));
 
   // Sync ref → leggi sempre il valore corrente nello scan callback
   useEffect(() => { pairedIdRef.current = pairedDeviceId; }, [pairedDeviceId]);
@@ -593,6 +601,7 @@ export function useBLE() {
     // sintetizzato qui (in produzione arriva dal firmware via 0xaa0c).
     setWheelSensorStatus('connected');
     let t = 0;
+    let coastV = 0;   // velocità ruota durante il coast-down (sim Crr)
     tickRef.current = setInterval(() => {
       t += 0.1;
       const speedMs = 10 + Math.sin(t * 0.15) * 2;
@@ -609,9 +618,29 @@ export function useBLE() {
         cadenceRpm: 90 + Math.round(Math.sin(t * 0.1) * 5),
         hrBpm:      140 + Math.round(Math.sin(t * 0.07) * 10),
       });
+
+      // Sensore ruota: durante un coast-down la velocità decade fisicamente
+      // (a = -(crr·g + k_aero·v²)), così la calibrazione Crr è completabile in
+      // sim e il fit recupera crr≈0.004; altrimenti gira alla velocità nominale.
+      const mode = useStore.getState().crrCalib.mode;
+      const coasting = mode === 'coast_indoor' || mode === 'coast_outdoor_a' || mode === 'coast_outdoor_b';
+      let wheelV: number;
+      let wheelA: number;
+      if (coasting) {
+        if (coastV <= 0) {
+          coastV = Math.max(6, (useStore.getState().crrCalib.targetSpeedKmh || 30) / 3.6);
+        }
+        wheelA = -(0.004 * 9.80665 + 0.00015 * coastV * coastV);
+        coastV = Math.max(0, coastV + wheelA * 0.1);
+        wheelV = coastV;
+      } else {
+        coastV = 0;
+        wheelV = speedMs;
+        wheelA = -(0.004 * 9.80665 + 0.00015 * speedMs * speedMs);
+      }
       updateWheelStream({
-        speedMs,
-        accelMs2: -(0.004 * 9.80665 + 0.00015 * speedMs * speedMs),
+        speedMs:  wheelV,
+        accelMs2: wheelA,
         tempC:    22 + Math.sin(t * 0.05),
         vibRMS:   0.15 + Math.abs(Math.sin(t * 0.4)) * 0.05,
       });

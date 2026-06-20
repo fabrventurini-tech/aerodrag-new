@@ -4,6 +4,7 @@ import {
   TouchableOpacity, Alert, Switch, Modal, ActivityIndicator, Platform,
 } from 'react-native';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import {
   loadPairedDevice, unpairDevice, loadSensorWhitelist,
   addSensorToWhitelist, removeSensorFromWhitelist, clearSensorWhitelist,
@@ -36,7 +37,12 @@ export function SettingsScreen() {
     setPairedDevice: setStorePairedDevice,
     wheelSensorStatus, wheelSensorId, crrCalib,
     bleStatus, discoveredSensors,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    calib: s.calib, setCalib: s.setCalib, isSimMode: s.isSimMode, setSimMode: s.setSimMode,
+    setPairedDevice: s.setPairedDevice,
+    wheelSensorStatus: s.wheelSensorStatus, wheelSensorId: s.wheelSensorId, crrCalib: s.crrCalib,
+    bleStatus: s.bleStatus, discoveredSensors: s.discoveredSensors,
+  })));
 
   const [pairedDevice, setPairedDevice]   = useState<PairedDevice | null>(null);
   const [sensorList, setSensorList]       = useState<SensorEntry[]>([]);

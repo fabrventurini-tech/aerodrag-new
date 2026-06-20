@@ -4,6 +4,7 @@ import {
   TouchableOpacity, Modal, Alert, Animated,
 } from 'react-native';
 import { useStore, CrrCalibResult, CrrRunResult } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { surfaceLabelFromCrr } from '../physics/crr';
 import { Colors, Sp, Radius } from '../theme';
 import { WHEEL_CMD } from '../hooks/useBLE';
@@ -31,11 +32,18 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
     crrCalib, wheelStream, wheelSensorStatus,
     startCrrCalib, setCrrTargetSpeed, readyForSpinup, startCrrRun, finalizeCrrRun,
     applyCrrResult, resetCrrCalib, loadCrrHistory,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    crrCalib: s.crrCalib, wheelStream: s.wheelStream, wheelSensorStatus: s.wheelSensorStatus,
+    startCrrCalib: s.startCrrCalib, setCrrTargetSpeed: s.setCrrTargetSpeed,
+    readyForSpinup: s.readyForSpinup, startCrrRun: s.startCrrRun, finalizeCrrRun: s.finalizeCrrRun,
+    applyCrrResult: s.applyCrrResult, resetCrrCalib: s.resetCrrCalib, loadCrrHistory: s.loadCrrHistory,
+  })));
 
   const [coastTimer, setCoastTimer] = useState(0);
   const coastIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const finalizingRef    = useRef(false);   // guardia idempotente per l'auto-stop
+  const lowSpeedCountRef = useRef(0);        // campioni consecutivi sotto soglia
 
   useEffect(() => {
     if (visible) loadCrrHistory();
@@ -67,13 +75,25 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
     };
   }, [crrCalib.mode]);
 
-  // Auto-finalizza il run quando la velocità scende sotto 2 m/s
+  // Auto-finalizza il run a fine coast-down: richiede una durata reale (≥5 s) E
+  // velocità sotto soglia per più campioni consecutivi (~0.5 s a 10 Hz), una
+  // sola volta (guardia idempotente). Evita chiusure premature su un singolo dip
+  // di velocità e doppie finalizzazioni prima del cambio di mode.
   useEffect(() => {
     const isCoasting = ['coast_indoor', 'coast_outdoor_a', 'coast_outdoor_b'].includes(crrCalib.mode);
-    if (isCoasting && wheelStream.speedMs < 2.0 && crrCalib.activeSamples.length > 30) {
+    if (!isCoasting) {
+      finalizingRef.current = false;
+      lowSpeedCountRef.current = 0;
+      return;
+    }
+    if (wheelStream.speedMs < 2.0) lowSpeedCountRef.current += 1;
+    else                          lowSpeedCountRef.current = 0;
+
+    if (!finalizingRef.current && coastTimer >= 5 && lowSpeedCountRef.current >= 5) {
+      finalizingRef.current = true;
       handleStopRun();
     }
-  }, [wheelStream.speedMs, crrCalib.mode]);
+  }, [wheelStream.speedMs, crrCalib.mode, coastTimer]);
 
   function handleClose() {
     if (['coast_indoor', 'coast_outdoor_a', 'coast_outdoor_b', 'spinup'].includes(crrCalib.mode)) {
