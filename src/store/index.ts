@@ -99,6 +99,10 @@ const DEFAULT_CRR_CALIB: CrrCalibState = {
   history:      [],
 };
 
+// Cap della history di sessione (campioni a 1 Hz). ~2 ore: oltre questo limite
+// i campioni più vecchi vengono decimati dal fronte per evitare il memory leak.
+const MAX_HISTORY = 7200;
+
 const EMPTY_SENSOR: SensorInput = {
   pitotPa: 0, staticPa: 101325, tempC: 20, humidity: 0.5,
   altM: 0, pitchDeg: 0, rollDeg: 0, powerW: 0,
@@ -271,6 +275,9 @@ export const useStore = create<AeroDragStore>((set, get) => ({
   setCoachStatus: (s, err) => set({ coachStatus: s, coachErrorMsg: err ?? '' }),
   updateWheelStream:    (s) => {
     set({ wheelStream: s });
+    // La ruota è la velocità a terra durante il coast-down: propaga la velocità
+    // anche a sensor.speedMs, unica sorgente di computePhysics/coach frame (#2).
+    get().updateSensors({ speedMs: s.speedMs });
     // Accumula campioni se è in corso un run di calibrazione
     const { crrCalib } = get();
     const recording = ['coast_indoor', 'coast_outdoor_a', 'coast_outdoor_b'].includes(crrCalib.mode);
@@ -285,9 +292,9 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     }
   },
 
-  onCrrRunComplete: ({ crr, quality, runIndex }) => {
-    // Riceve il risultato parziale dal firmware (opzionale, l'app calcola comunque)
-    // Solo per aggiornamento UI rapido
+  onCrrRunComplete: (_result) => {
+    // No-op: il risultato Crr parziale del firmware (0xBB02) non è usato — l'app
+    // calcola il Crr in autonomia via fitCrrFromRun. Mantenuto per l'interfaccia.
   },
 
   // ── Calibrazione Crr ───────────────────────────────────────────────────────
@@ -471,9 +478,15 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     const elapsed = Math.floor((now - sessionStart) / 1000);
     const point: DataPoint = { t: now, physics, sensor };
 
+    // Cap della history per evitare crescita illimitata e copia integrale ad
+    // ogni tick (#7). A 1 Hz, MAX_HISTORY campioni ≈ alcune ore di sessione.
+    const next = history.length >= MAX_HISTORY
+      ? [...history.slice(history.length - MAX_HISTORY + 1), point]
+      : [...history, point];
+
     set({
       elapsed,
-      history: [...history, point],
+      history: next,
     });
   },
 
@@ -498,6 +511,12 @@ export const useStore = create<AeroDragStore>((set, get) => ({
       isRecording:  false,
       sessionStart: null,
       previousSessions: nextSessions,
+      // Reset dello stato sessione dopo l'archiviazione (#8)
+      history:      [],
+      laps:         [],
+      currentLap:   1,
+      lapStartIdx:  0,
+      elapsed:      0,
     });
     if (history.length > 0) {
       AsyncStorage.setItem('aerodrag:sessions', JSON.stringify(nextSessions))
@@ -563,9 +582,20 @@ export const useStore = create<AeroDragStore>((set, get) => ({
         const profiles = (JSON.parse(raw) as any[]).map((p) => {
           // Migrazione da massKg unico a massRiderKg + massBikeKg
           if (p.massKg !== undefined && p.massRiderKg === undefined) {
-            return { ...p, massRiderKg: Math.max(p.massKg - 8, 40), massBikeKg: 8 };
+            p = { ...p, massRiderKg: Math.max(p.massKg - 8, 40), massBikeKg: 8 };
           }
-          return p;
+          // Normalizza i campi numerici: valori non finiti/fuori range salvati
+          // da versioni vecchie propagherebbero NaN nella massa/Crr (#17).
+          const num = (v: any, def: number, lo: number, hi: number) => {
+            const n = typeof v === 'number' ? v : parseFloat(v);
+            return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def;
+          };
+          return {
+            ...p,
+            massRiderKg: num(p.massRiderKg, 70,   20, 200),
+            massBikeKg:  num(p.massBikeKg,  8,     2,  40),
+            crr:         num(p.crr,         0.004, 0.001, 0.025),
+          } as AthleteProfile;
         });
         set({ athleteProfiles: profiles });
       }

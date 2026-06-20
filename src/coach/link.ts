@@ -172,6 +172,9 @@ export function coachConnect(targetUrl: string): void {
 export function coachDisconnect(): void {
   manualDisconnect = true;
   clearTimers();
+  // Libera la subscription allo store (altrimenti resta attiva per sempre, #4)
+  storeUnsub?.();
+  storeUnsub = null;
   if (ws) {
     ws.onclose = null;
     ws.onerror = null;

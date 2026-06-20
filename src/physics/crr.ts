@@ -82,33 +82,61 @@ export function fitCrrFromRun(
   );
   if (valid.length < 15) return INVALID;
 
-  const k_aero = params.cdaM2 > 0
-    ? (params.rhoKgM3 * params.cdaM2) / (2 * params.massKg)
-    : 0;
+  const cosT = Math.cos(slopeRad);
+  const sinT = Math.sin(slopeRad);
 
-  const crrValues = valid.map((s) => {
-    // a_corretto = a + k_aero·v² + g·sin(θ) → quello che Crr·g deve spiegare
-    const a_corrected = s.accelMs2 + k_aero * s.speedMs * s.speedMs + G * Math.sin(slopeRad);
-    return -a_corrected / (G * Math.cos(slopeRad));
-  });
+  // Modello coast-down:  a = -(Crr·g·cosθ) - k_aero·v² - g·sinθ
+  // Riscritto come regressione lineare di a su x = v²:
+  //   a = intercept + k·x   con   intercept = -(Crr·g·cosθ + g·sinθ)
+  //                                k         = -k_aero
+  // Crr si ricava dall'intercetta:  Crr = -(intercept + g·sinθ) / (g·cosθ)
+  // R² è calcolato sui residui del fit rispetto al modello (#5).
+  const n = valid.length;
+  let crr: number;
+  let rSquared: number;
 
-  const crr = crrValues.reduce((s, x) => s + x, 0) / crrValues.length;
-
-  // Bontà del fit: confronta la decelerazione predetta con quella misurata
-  const meanA = valid.reduce((s, x) => s + x.accelMs2, 0) / valid.length;
+  const meanA = valid.reduce((s, x) => s + x.accelMs2, 0) / n;
   const ssTot = valid.reduce((s, x) => s + (x.accelMs2 - meanA) ** 2, 0);
-  const ssRes = valid.reduce((s, x) => {
-    const predicted = -crr * G * Math.cos(slopeRad)
-      - k_aero * x.speedMs * x.speedMs
-      - G * Math.sin(slopeRad);
-    return s + (x.accelMs2 - predicted) ** 2;
-  }, 0);
-  const rSquared = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 0;
 
-  const avgTempC = valid.reduce((s, x) => s + x.tempC, 0) / valid.length;
-  const avgVibRMS = valid.reduce((s, x) => s + x.vibRMS, 0) / valid.length;
-  const first = samples[0];
-  const last  = samples[samples.length - 1];
+  if (params.cdaM2 > 0) {
+    // Regressione ai minimi quadrati: a = intercept + slope·(v²)
+    const xs = valid.map((s) => s.speedMs * s.speedMs);
+    const ys = valid.map((s) => s.accelMs2);
+    const meanX = xs.reduce((s, x) => s + x, 0) / n;
+    const meanY = meanA;
+    let sxx = 0;
+    let sxy = 0;
+    for (let i = 0; i < n; i++) {
+      sxx += (xs[i] - meanX) ** 2;
+      sxy += (xs[i] - meanX) * (ys[i] - meanY);
+    }
+    const slope     = sxx > 0 ? sxy / sxx : 0;
+    const intercept = meanY - slope * meanX;
+
+    crr = -(intercept + G * sinT) / (G * cosT);
+
+    // R² dai residui del modello fittato (predetto = intercept + slope·x)
+    const ssRes = valid.reduce((s, x, i) => {
+      const predicted = intercept + slope * xs[i];
+      return s + (x.accelMs2 - predicted) ** 2;
+    }, 0);
+    rSquared = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 0;
+  } else {
+    // Run indoor senza aero (CdA=0): modello degenera a a ≈ -Crr·g·cosθ - g·sinθ
+    // (costante). Crr = media; R² comunque dai residui rispetto al modello.
+    const crrValues = valid.map((s) => -(s.accelMs2 + G * sinT) / (G * cosT));
+    crr = crrValues.reduce((s, x) => s + x, 0) / n;
+
+    const predicted = -crr * G * cosT - G * sinT;
+    const ssRes = valid.reduce((s, x) => s + (x.accelMs2 - predicted) ** 2, 0);
+    rSquared = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 0;
+  }
+
+  const avgTempC = valid.reduce((s, x) => s + x.tempC, 0) / n;
+  const avgVibRMS = valid.reduce((s, x) => s + x.vibRMS, 0) / n;
+  // Usa i campioni FILTRATI (valid) per velocità/durata, coerente col fit (#15)
+  const first = valid[0];
+  const last  = valid[valid.length - 1];
 
   return {
     crr:          Math.max(0.001, Math.min(0.025, crr)),
