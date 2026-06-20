@@ -4,6 +4,7 @@ import {
   TouchableOpacity, Alert, Switch,
 } from 'react-native';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import {
   loadPairedDevice, unpairDevice, loadSensorWhitelist,
   removeSensorFromWhitelist, clearSensorWhitelist,
@@ -33,7 +34,12 @@ export function SettingsScreen() {
     setPairedDevice: setStorePairedDevice,
     wheelSensorStatus, wheelSensorId, crrCalib,
     cadenceSensorStatus, cadenceSensorId,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    calib: s.calib, setCalib: s.setCalib, isSimMode: s.isSimMode, setSimMode: s.setSimMode,
+    setPairedDevice: s.setPairedDevice,
+    wheelSensorStatus: s.wheelSensorStatus, wheelSensorId: s.wheelSensorId, crrCalib: s.crrCalib,
+    cadenceSensorStatus: s.cadenceSensorStatus, cadenceSensorId: s.cadenceSensorId,
+  })));
 
   const [pairedDevice, setPairedDevice]     = useState<PairedDevice | null>(null);
   const [sensorList, setSensorList]         = useState<SensorEntry[]>([]);
@@ -395,7 +401,7 @@ export function SettingsScreen() {
           value={calib.crr}
           step={0.0005}
           min={0.001}
-          max={0.015}
+          max={0.025}
           decimals={4}
           onChange={(v) => setCalib({ crr: v })}
         />

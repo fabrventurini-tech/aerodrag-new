@@ -36,6 +36,7 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
   const [coastTimer, setCoastTimer] = useState(0);
   const coastIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const finalizingRef = useRef(false);  // guardia idempotente auto-finalize (#12)
 
   useEffect(() => {
     if (visible) loadCrrHistory();
@@ -67,10 +68,18 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
     };
   }, [crrCalib.mode]);
 
-  // Auto-finalizza il run quando la velocità scende sotto 2 m/s
+  // Resetta la guardia ad ogni (nuovo) ingresso in fase di coast-down (#12)
   useEffect(() => {
     const isCoasting = ['coast_indoor', 'coast_outdoor_a', 'coast_outdoor_b'].includes(crrCalib.mode);
-    if (isCoasting && wheelStream.speedMs < 2.0 && crrCalib.activeSamples.length > 30) {
+    if (isCoasting) finalizingRef.current = false;
+  }, [crrCalib.mode]);
+
+  // Auto-finalizza il run quando la velocità scende sotto 2 m/s.
+  // La guardia finalizingRef evita doppia finalizzazione dello stesso run (#12).
+  useEffect(() => {
+    const isCoasting = ['coast_indoor', 'coast_outdoor_a', 'coast_outdoor_b'].includes(crrCalib.mode);
+    if (isCoasting && !finalizingRef.current
+        && wheelStream.speedMs < 2.0 && crrCalib.activeSamples.length > 30) {
       handleStopRun();
     }
   }, [wheelStream.speedMs, crrCalib.mode]);
@@ -106,7 +115,17 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
   }
 
   function handleStopRun() {
+    // Idempotente: ignora chiamate ripetute per lo stesso run (#12)
+    if (finalizingRef.current) return;
+    finalizingRef.current = true;
+    // Legge activeSamples dallo stato corrente al momento dello stop, non da
+    // una closure potenzialmente obsoleta: se vuota, non finalizzare a vuoto.
+    const samplesNow = useStore.getState().crrCalib.activeSamples;
     sendCommand(WHEEL_CMD.CANCEL);
+    if (samplesNow.length === 0) {
+      finalizingRef.current = false;
+      return;
+    }
     finalizeCrrRun();
   }
 

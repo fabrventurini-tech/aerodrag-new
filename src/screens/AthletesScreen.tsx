@@ -6,8 +6,16 @@ import {
 import { useStore, AthleteProfile } from '../store';
 import { Colors, Sp, Radius } from '../theme';
 
+// ID robusto: timestamp (base36) + componente random lunga, per evitare
+// collisioni tra profili creati a distanza ravvicinata (#14).
 function generateId(): string {
-  return Math.random().toString(36).slice(2, 10);
+  const rand = Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 12);
+  return `${Date.now().toString(36)}-${rand}`;
+}
+
+// Clamp di un valore numerico nel range [lo, hi]
+function clampNum(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
 }
 
 // La tastiera decimal-pad italiana inserisce la virgola: parseFloat("72,5")
@@ -46,14 +54,18 @@ export function AthletesScreen() {
 
   async function handleSave() {
     if (!editing || !name.trim()) return;
-    const riderKg = parseDecimal(massRider) || 70;
-    const bikeKg  = parseDecimal(massBike)  || 8;
+    const riderKg = clampNum(parseDecimal(massRider) || 70, 20, 200);
+    const bikeKg  = clampNum(parseDecimal(massBike)  || 8,   2,  40);
+    // Valida il Crr nel range firmware [0.001, 0.025] (#9)
+    const crrVal  = clampNum(parseDecimal(crr) || 0.004, 0.001, 0.025);
+    // Garantisce ID univoco anche per profili importati senza id (#14)
+    const id = editing.id && editing.id.trim() ? editing.id : generateId();
     const profile: AthleteProfile = {
-      id:          editing.id,
+      id,
       name:        name.trim(),
       massRiderKg: riderKg,
       massBikeKg:  bikeKg,
-      crr:         parseDecimal(crr) || 0.004,
+      crr:         crrVal,
     };
     await saveAthleteProfile(profile);
     setEditing(null);

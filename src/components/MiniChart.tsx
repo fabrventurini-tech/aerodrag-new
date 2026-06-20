@@ -10,15 +10,18 @@ interface Props {
 }
 
 export function MiniChart({ data, color = Colors.teal, height = 40 }: Props) {
-  if (data.length < 2) return <View style={[styles.container, { height }]} />;
+  // Scarta NaN/Infinity: un solo valore non finito propagherebbe NaN nei
+  // coefficienti dell'SVG e farebbe sparire l'intera polyline (#16).
+  const clean = data.filter((v) => Number.isFinite(v));
+  if (clean.length < 2) return <View style={[styles.container, { height }]} />;
 
-  const max = data.reduce((a, b) => (b > a ? b : a), data[0]);
-  const min = data.reduce((a, b) => (b < a ? b : a), data[0]);
+  const max = clean.reduce((a, b) => (b > a ? b : a), clean[0]);
+  const min = clean.reduce((a, b) => (b < a ? b : a), clean[0]);
   const range = max - min || 1;
 
-  const points = data
+  const points = clean
     .map((v, i) => {
-      const x = (i / (data.length - 1)) * 100;
+      const x = (i / (clean.length - 1)) * 100;
       const y = (1 - (v - min) / range) * 100;
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     })

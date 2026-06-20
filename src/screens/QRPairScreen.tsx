@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert, Modal,
 } from 'react-native';
@@ -16,14 +16,18 @@ interface Props {
 export function QRPairScreen({ visible, onClose, onPaired }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
+  const askedRef = useRef(false);  // richiedi il permesso una sola volta (#20)
   const setPairedDevice = useStore((s) => s.setPairedDevice);
 
   useEffect(() => {
     if (visible) setScanned(false);
+    else askedRef.current = false;  // riarma per la prossima apertura
   }, [visible]);
 
   useEffect(() => {
-    if (visible && permission && !permission.granted && permission.canAskAgain) {
+    if (visible && permission && !permission.granted && permission.canAskAgain
+        && !askedRef.current) {
+      askedRef.current = true;
       requestPermission();
     }
   }, [visible, permission]);

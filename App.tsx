@@ -9,6 +9,7 @@ import { useWheelSensor, wheelSensorApi } from './src/hooks/useWheelSensor';
 import { useCadenceSensor } from './src/hooks/useCadenceSensor';
 import { coachAutoConnect } from './src/coach/link';
 import { useStore } from './src/store';
+import { useShallow } from 'zustand/react/shallow';
 import { NavBar, Screen } from './src/components';
 
 import { LiveScreen }     from './src/screens/LiveScreen';
@@ -24,7 +25,12 @@ function TopBar() {
     bleStatus, batteryPct, isRecording, elapsed,
     activeAthleteId, athleteProfiles,
     wheelSensorStatus, cadenceSensorStatus,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    bleStatus: s.bleStatus, batteryPct: s.batteryPct,
+    isRecording: s.isRecording, elapsed: s.elapsed,
+    activeAthleteId: s.activeAthleteId, athleteProfiles: s.athleteProfiles,
+    wheelSensorStatus: s.wheelSensorStatus, cadenceSensorStatus: s.cadenceSensorStatus,
+  })));
 
   const bleColor =
     bleStatus === 'connected'                                    ? Colors.teal  :
@@ -76,7 +82,11 @@ export default function App() {
   const {
     loadCalib, loadAthleteProfiles, loadPreviousSessions, loadPairedDeviceId,
     calib, activeAthleteId, athleteProfiles,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    loadCalib: s.loadCalib, loadAthleteProfiles: s.loadAthleteProfiles,
+    loadPreviousSessions: s.loadPreviousSessions, loadPairedDeviceId: s.loadPairedDeviceId,
+    calib: s.calib, activeAthleteId: s.activeAthleteId, athleteProfiles: s.athleteProfiles,
+  })));
 
   const { syncConfigToDevice } = useBLE();
   useWheelSensor();

@@ -4,6 +4,7 @@ import {
   TouchableOpacity, Vibration,
 } from 'react-native';
 import { useStore } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { MetricCard } from '../components/MetricCard';
 import { MiniChart } from '../components/MiniChart';
 import { Colors, Sp, Radius } from '../theme';
@@ -26,7 +27,13 @@ export function LiveScreen() {
     currentLap, startSession, stopSession, addLap,
     isSimMode, setSimMode,
     crrSource, crrActive,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    physics: s.physics, sensor: s.sensor, history: s.history,
+    isRecording: s.isRecording, elapsed: s.elapsed, currentLap: s.currentLap,
+    startSession: s.startSession, stopSession: s.stopSession, addLap: s.addLap,
+    isSimMode: s.isSimMode, setSimMode: s.setSimMode,
+    crrSource: s.crrSource, crrActive: s.crrActive,
+  })));
 
   const cdaHistory    = history.slice(-60).map((p) => p.physics.cda);
   const powerHistory  = history.slice(-60).map((p) => p.sensor.powerW);
