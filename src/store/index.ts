@@ -474,7 +474,10 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     // Fisica locale solo come fallback: se l'ESP32 sta notificando la sua
     // fisica su 0xaa09 (sorgente di verità), non sovrascriverla col ricalcolo
     // locale — altrimenti il CdA visualizzato flippa tra i due valori.
-    const deviceFresh = Date.now() - get().lastDevicePhysicsAt < 1500;
+    // Finestra stretta (500 ms): la PHYSICS è a 10 Hz, quindi se il device tace
+    // per >500 ms la consideriamo stantia e ricalcoliamo localmente (evita di
+    // inviare al coach un CdA vecchio a 2 Hz quando arriva solo ENV a 1 Hz).
+    const deviceFresh = Date.now() - get().lastDevicePhysicsAt < 500;
     if (deviceFresh) {
       set({ sensor: next, crrSource, crrActive: crr });
     } else {
