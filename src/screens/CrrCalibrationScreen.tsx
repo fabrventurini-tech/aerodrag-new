@@ -6,8 +6,28 @@ import {
 import { useStore, CrrCalibResult, CrrRunResult } from '../store';
 import { useShallow } from 'zustand/react/shallow';
 import { surfaceLabelFromCrr } from '../physics/crr';
-import { Colors, Sp, Radius } from '../theme';
+import { Colors, Sp, Radius, monoNum, monoNumBold } from '../theme';
+import { Icon } from '../components/Icon';
 import { WHEEL_CMD } from '../hooks/useBLE';
+
+// Badge provenienza Crr — stato LOCALE (mai dal wire). È la fonte del valore
+// mostrato anche in Live. Contract v0.2.3 invariato.
+type CrrSourceT = 'default' | 'manual' | 'calibrated' | 'profile';
+const CRR_SOURCE_BADGE: Record<CrrSourceT, { label: string; color: string }> = {
+  calibrated: { label: 'MISURATO', color: Colors.teal  },
+  default:    { label: 'STIMA',    color: Colors.amber },
+  manual:     { label: 'MANUALE',  color: Colors.muted },
+  profile:    { label: 'PROFILO',  color: Colors.blue  },
+};
+
+function CrrSourceBadge({ source }: { source: CrrSourceT }) {
+  const { label, color } = CRR_SOURCE_BADGE[source];
+  return (
+    <View style={[styles.sourceBadge, { borderColor: color + '70' }]}>
+      <Text style={[styles.sourceBadgeText, { color }]}>CRR SOURCE · {label}</Text>
+    </View>
+  );
+}
 
 interface Props {
   visible:       boolean;
@@ -29,11 +49,12 @@ export const QUALITY_OPTIONS = [
 
 export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
   const {
-    crrCalib, wheelStream, wheelSensorStatus,
+    crrCalib, wheelStream, wheelSensorStatus, crrSource,
     startCrrCalib, setCrrTargetSpeed, readyForSpinup, startCrrRun, finalizeCrrRun,
     applyCrrResult, resetCrrCalib, loadCrrHistory,
   } = useStore(useShallow((s) => ({
     crrCalib: s.crrCalib, wheelStream: s.wheelStream, wheelSensorStatus: s.wheelSensorStatus,
+    crrSource: s.crrSource,
     startCrrCalib: s.startCrrCalib, setCrrTargetSpeed: s.setCrrTargetSpeed,
     readyForSpinup: s.readyForSpinup, startCrrRun: s.startCrrRun, finalizeCrrRun: s.finalizeCrrRun,
     applyCrrResult: s.applyCrrResult, resetCrrCalib: s.resetCrrCalib, loadCrrHistory: s.loadCrrHistory,
@@ -215,6 +236,7 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
           {crrCalib.mode === 'done' && crrCalib.result && (
             <ResultPhase
               result={crrCalib.result}
+              source={crrSource}
               runs={crrCalib.protocol === 'indoor' ? crrCalib.indoorRuns : [...crrCalib.outdoorRunsA, ...crrCalib.outdoorRunsB]}
               onApply={handleApply}
               onRetry={() => resetCrrCalib()}
@@ -247,7 +269,9 @@ function ProtocolSelection({ onSelect, disabled }: {
         onPress={() => !disabled && onSelect('indoor')}
         activeOpacity={0.8}
       >
-        <Text style={styles.protocolIcon}>🏠</Text>
+        <View style={styles.protocolIcon}>
+          <Icon name="home" size={26} color={Colors.teal} />
+        </View>
         <View style={styles.protocolText}>
           <Text style={styles.protocolName}>Indoor — Rullo</Text>
           <Text style={styles.protocolDesc}>
@@ -263,7 +287,9 @@ function ProtocolSelection({ onSelect, disabled }: {
         onPress={() => !disabled && onSelect('outdoor')}
         activeOpacity={0.8}
       >
-        <Text style={styles.protocolIcon}>🛣</Text>
+        <View style={styles.protocolIcon}>
+          <Icon name="road" size={26} color={Colors.blue} />
+        </View>
         <View style={styles.protocolText}>
           <Text style={styles.protocolName}>Outdoor — Strada / Velodromo</Text>
           <Text style={styles.protocolDesc}>
@@ -425,8 +451,9 @@ function CoastPhase({ speedKmh, accelMs2, vibRMS, elapsed, maxS, samples, pulseA
   );
 }
 
-function ResultPhase({ result, runs, onApply, onRetry }: {
+function ResultPhase({ result, source, runs, onApply, onRetry }: {
   result:  CrrCalibResult;
+  source:  CrrSourceT;
   runs:    CrrRunResult[];
   onApply: () => void;
   onRetry: () => void;
@@ -450,7 +477,10 @@ function ResultPhase({ result, runs, onApply, onRetry }: {
           </View>
         </View>
 
-        <Text style={styles.surfaceLabel}>{result.surfaceLabel}</Text>
+        <View style={styles.sourceRow}>
+          <CrrSourceBadge source={source} />
+          <Text style={styles.surfaceLabel}>{result.surfaceLabel}</Text>
+        </View>
 
         <View style={styles.resultDetails}>
           <DetailRow label="Range" value={`${result.crrMin.toFixed(4)} – ${result.crrMax.toFixed(4)}`} />
@@ -512,7 +542,9 @@ function CrrHistory({ history }: {
 function CheckItem({ text }: { text: string }) {
   return (
     <View style={styles.checkRow}>
-      <Text style={styles.checkIcon}>✓</Text>
+      <View style={styles.checkIcon}>
+        <Icon name="check" size={14} color={Colors.teal} strokeWidth={2.5} />
+      </View>
       <Text style={styles.checkText}>{text}</Text>
     </View>
   );
@@ -593,7 +625,7 @@ const styles = StyleSheet.create({
     gap:             Sp.md,
     alignItems:      'flex-start',
   },
-  protocolIcon: { fontSize: 28 },
+  protocolIcon: { width: 30, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 2 },
   protocolText: { flex: 1, gap: Sp.xs },
   protocolName: { fontSize: 15, fontWeight: '700', color: Colors.textBright },
   protocolDesc: { fontSize: 12, color: Colors.muted, lineHeight: 18 },
@@ -604,7 +636,7 @@ const styles = StyleSheet.create({
   runLabel:  { fontSize: 13, color: Colors.teal, fontWeight: '700' },
   dirLabel:  { fontSize: 12, color: Colors.muted },
 
-  bigSpeed:     { fontSize: 56, fontWeight: '800', color: Colors.textBright, textAlign: 'center', fontVariant: ['tabular-nums'] },
+  bigSpeed:     { ...monoNumBold, fontSize: 56, color: Colors.textBright, textAlign: 'center' },
   bigSpeedUnit: { fontSize: 14, color: Colors.muted, textAlign: 'center', marginTop: -Sp.md },
 
   progressBg: {
@@ -650,7 +682,7 @@ const styles = StyleSheet.create({
   },
   metricPair:  { alignItems: 'center', minWidth: '40%' },
   metricLabel: { fontSize: 10, color: Colors.muted },
-  metricValue: { fontSize: 14, color: Colors.textBright, fontVariant: ['tabular-nums'] },
+  metricValue: { ...monoNum, fontSize: 14, color: Colors.textBright },
   coastHint:   { fontSize: 11, color: Colors.muted, textAlign: 'center' },
 
   resultRow: {
@@ -658,7 +690,7 @@ const styles = StyleSheet.create({
     alignItems:     'center',
     justifyContent: 'space-between',
   },
-  crrBig: { fontSize: 44, fontWeight: '800', color: Colors.teal, fontVariant: ['tabular-nums'] },
+  crrBig: { ...monoNumBold, fontSize: 44, color: Colors.teal },
   confidencePill: {
     borderWidth:     0.5,
     borderRadius:    Radius.sm,
@@ -671,26 +703,35 @@ const styles = StyleSheet.create({
   resultDetails: { gap: Sp.xs, marginTop: Sp.xs },
   detailRow:     { flexDirection: 'row', justifyContent: 'space-between' },
   detailLabel:   { fontSize: 12, color: Colors.muted },
-  detailValue:   { fontSize: 12, color: Colors.text, fontVariant: ['tabular-nums'] },
+  detailValue:   { ...monoNum, fontSize: 12, color: Colors.text },
 
   runsList: { gap: Sp.xs, borderTopWidth: 0.5, borderTopColor: Colors.border, paddingTop: Sp.sm },
   runItem:  { flexDirection: 'row', alignItems: 'center', gap: Sp.sm },
   runNum:   { fontSize: 11, color: Colors.muted, width: 24 },
   runValid: { fontSize: 11, fontWeight: '700', width: 64 },
-  runCrr:   { fontSize: 13, color: Colors.textBright, fontVariant: ['tabular-nums'], flex: 1 },
+  runCrr:   { ...monoNum, fontSize: 13, color: Colors.textBright, flex: 1 },
   runRsq:   { fontSize: 11, color: Colors.muted },
 
   historyRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: Sp.xs, borderBottomWidth: 0.5, borderBottomColor: Colors.border },
   historyLeft: { gap: 2 },
-  historyCrr:  { fontSize: 18, fontWeight: '700', color: Colors.teal, fontVariant: ['tabular-nums'] },
+  historyCrr:  { ...monoNum, fontSize: 18, color: Colors.teal },
   historyLabel: { fontSize: 11, color: Colors.muted },
   historyRight: { alignItems: 'flex-end', gap: 2 },
   historyConf:  { fontSize: 12, color: Colors.amber },
   historyDate:  { fontSize: 10, color: Colors.muted },
 
   checkRow:  { flexDirection: 'row', gap: Sp.sm, alignItems: 'flex-start' },
-  checkIcon: { fontSize: 14, color: Colors.teal, marginTop: 1 },
+  checkIcon: { marginTop: 2 },
   checkText: { fontSize: 13, color: Colors.text, flex: 1, lineHeight: 20 },
+
+  sourceRow:  { flexDirection: 'row', alignItems: 'center', gap: Sp.sm, flexWrap: 'wrap', marginTop: -Sp.xs },
+  sourceBadge: {
+    borderWidth:       0.5,
+    borderRadius:      Radius.sm,
+    paddingHorizontal: Sp.sm,
+    paddingVertical:   2,
+  },
+  sourceBadgeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
 
   qualityTitle: {
     fontSize:      11,
@@ -724,10 +765,9 @@ const styles = StyleSheet.create({
   },
   qualityLabelActive: { color: Colors.teal },
   qualityKmh: {
-    fontSize:        16,
-    fontWeight:      '800',
-    color:           Colors.muted,
-    fontVariant:     ['tabular-nums'],
+    ...monoNumBold,
+    fontSize: 16,
+    color:    Colors.muted,
   },
   qualityKmhActive:  { color: Colors.textBright },
   qualityDesc: {

@@ -7,7 +7,9 @@ import { useStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
 import { MetricCard } from '../components/MetricCard';
 import { MiniChart } from '../components/MiniChart';
-import { Colors, Sp, Radius } from '../theme';
+import { RingGauge } from '../components/RingGauge';
+import { Icon } from '../components/Icon';
+import { Colors, Sp, Radius, monoNum } from '../theme';
 
 function fmt(n: number, decimals = 2): string {
   if (!isFinite(n) || n === 0) return '–';
@@ -25,19 +27,22 @@ export function LiveScreen() {
   const {
     physics, sensor, history, isRecording, elapsed,
     currentLap, startSession, stopSession, addLap,
-    isSimMode, setSimMode,
     crrSource, crrActive,
   } = useStore(useShallow((s) => ({
     physics: s.physics, sensor: s.sensor, history: s.history,
     isRecording: s.isRecording, elapsed: s.elapsed, currentLap: s.currentLap,
     startSession: s.startSession, stopSession: s.stopSession, addLap: s.addLap,
-    isSimMode: s.isSimMode, setSimMode: s.setSimMode,
     crrSource: s.crrSource, crrActive: s.crrActive,
   })));
 
   const cdaHistory    = history.slice(-60).map((p) => p.physics.cda);
   const powerHistory  = history.slice(-60).map((p) => p.sensor.powerW);
   const speedKmh      = sensor.speedMs * 3.6;
+
+  // delta rispetto al miglior CdA della sessione (per il RingGauge)
+  const validCda  = history.map((p) => p.physics.cda).filter((v) => v > 0.05);
+  const bestCda   = validCda.length ? Math.min(...validCda) : null;
+  const deltaBest = physics.valid && bestCda != null ? physics.cda - bestCda : null;
 
   const handleRec = useCallback(() => {
     if (isRecording) stopSession();
@@ -56,17 +61,22 @@ export function LiveScreen() {
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
-      {/* ── CdA principale ── */}
-      <View style={styles.cdaCard}>
-        <Text style={styles.cdaLabel}>CdA</Text>
-        <Text style={styles.cdaValue}>
-          {physics.valid ? fmt(physics.cda, 3) : '–'}
-        </Text>
-        <Text style={styles.cdaUnit}>m²</Text>
-        {cdaHistory.length > 1 && (
-          <MiniChart data={cdaHistory} color={Colors.teal} height={32} />
-        )}
+      {/* ── Hero: anello CdA + quota aero ── */}
+      <View style={styles.hero}>
+        <RingGauge
+          cda={physics.cda}
+          valid={physics.valid}
+          deltaBest={deltaBest}
+          pctAero={physics.pctAero}
+        />
       </View>
+
+      {cdaHistory.length > 1 && (
+        <View style={styles.sparkCard}>
+          <Text style={styles.chartLabel}>CdA (ultimi 60s)</Text>
+          <MiniChart data={cdaHistory} color={Colors.teal} height={32} />
+        </View>
+      )}
 
       {/* ── Metriche riga 1 ── */}
       <View style={styles.row}>
@@ -122,7 +132,7 @@ export function LiveScreen() {
           <Text style={styles.breakdownTitle}>Breakdown potenza</Text>
           <View style={styles.breakdownRow}>
             <Text style={styles.breakdownLabel}>Aerodinamica</Text>
-            <Text style={[styles.breakdownValue, { color: Colors.teal }]}>
+            <Text style={[styles.breakdownValue, { color: Colors.amber }]}>
               {fmt(physics.pAeroW, 0)} W ({fmt(physics.pctAero, 0)}%)
             </Text>
           </View>
@@ -131,7 +141,7 @@ export function LiveScreen() {
               <Text style={styles.breakdownLabel}>Rolling</Text>
               <CrrBadge source={crrSource} crr={crrActive} />
             </View>
-            <Text style={styles.breakdownValue}>
+            <Text style={[styles.breakdownValue, { color: Colors.blue }]}>
               {fmt(physics.pRollingW, 0)} W
             </Text>
           </View>
@@ -155,52 +165,41 @@ export function LiveScreen() {
       {/* ── Lap info ── */}
       {isRecording && (
         <View style={styles.lapInfo}>
+          <View style={styles.recDot} />
           <Text style={styles.lapText}>Lap {currentLap}  •  {fmtTime(elapsed)}</Text>
         </View>
       )}
 
-      {/* ── Pulsanti REC + LAP ── */}
-      <View style={styles.buttonRow}>
+      {/* ── Pulsanti: LAP primario in REC, STOP secondario ── */}
+      {!isRecording ? (
         <TouchableOpacity
-          style={[styles.recBtn, {
-            borderColor:     isRecording ? Colors.red  : Colors.teal,
-            backgroundColor: isRecording ? Colors.redBg : Colors.tealBg,
-            flex: 2,
-          }]}
+          style={[styles.btn, styles.btnPrimary, { flex: 1 }]}
           onPress={handleRec}
-          activeOpacity={0.75}
+          activeOpacity={0.8}
         >
-          <Text style={[styles.recText, {
-            color: isRecording ? Colors.red : Colors.teal,
-          }]}>
-            {isRecording ? '⏹ STOP' : '⏺ REC'}
-          </Text>
+          <Icon name="record" size={20} color={Colors.teal} filled />
+          <Text style={[styles.btnText, { color: Colors.teal }]}>AVVIA</Text>
         </TouchableOpacity>
-
-        {isRecording && (
+      ) : (
+        <View style={styles.buttonRow}>
           <TouchableOpacity
-            style={[styles.recBtn, {
-              borderColor:     Colors.amber,
-              backgroundColor: Colors.amberBg,
-              flex: 1,
-            }]}
+            style={[styles.btn, styles.btnPrimary, styles.btnBig, { flex: 2 }]}
             onPress={handleLap}
-            activeOpacity={0.75}
+            activeOpacity={0.8}
           >
-            <Text style={[styles.recText, { color: Colors.amber }]}>LAP</Text>
+            <Icon name="flag" size={24} color={Colors.teal} />
+            <Text style={[styles.btnText, styles.btnTextBig, { color: Colors.teal }]}>LAP</Text>
           </TouchableOpacity>
-        )}
-      </View>
-
-      {/* ── Toggle simulazione ── */}
-      <TouchableOpacity
-        style={styles.simBtn}
-        onPress={() => setSimMode(!isSimMode)}
-      >
-        <Text style={styles.simText}>
-          {isSimMode ? '🔴 Simulazione attiva' : '⚫ Modalità simulazione'}
-        </Text>
-      </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.btn, styles.btnStop, { flex: 1 }]}
+            onPress={handleRec}
+            activeOpacity={0.8}
+          >
+            <Icon name="stop" size={18} color={Colors.red} filled />
+            <Text style={[styles.btnText, { color: Colors.red }]}>STOP</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -210,10 +209,10 @@ export function LiveScreen() {
 type CrrSource = 'default' | 'manual' | 'calibrated' | 'profile';
 
 const CRR_BADGE: Record<CrrSource, { label: string; color: string }> = {
-  default:    { label: 'stima',     color: Colors.amber },
-  manual:     { label: 'manuale',   color: Colors.muted },
+  default:    { label: 'stima',    color: Colors.amber },
+  manual:     { label: 'manuale',  color: Colors.muted },
   calibrated: { label: 'misurato', color: Colors.teal  },
-  profile:    { label: 'profilo',   color: Colors.blue  },
+  profile:    { label: 'profilo',  color: Colors.blue  },
 };
 
 function CrrBadge({ source, crr }: { source: CrrSource; crr: number }) {
@@ -237,7 +236,7 @@ const badgeStyles = StyleSheet.create({
     paddingVertical:   1,
     marginLeft:      Sp.xs,
   },
-  crr:   { fontSize: 10, fontVariant: ['tabular-nums'], fontWeight: '600' },
+  crr:   { ...monoNum, fontSize: 10, fontWeight: '600' },
   label: { fontSize: 9 },
 });
 
@@ -245,18 +244,23 @@ const styles = StyleSheet.create({
   root:    { flex: 1, backgroundColor: Colors.bg },
   content: { padding: Sp.md, gap: Sp.sm, paddingBottom: Sp.xl },
 
-  cdaCard: {
+  hero: {
     backgroundColor: Colors.s1,
     borderRadius:    Radius.lg,
     borderWidth:     0.5,
-    borderColor:     Colors.teal + '40',
+    borderColor:     Colors.teal + '33',
     padding:         Sp.lg,
     alignItems:      'center',
-    gap:             Sp.xs,
   },
-  cdaLabel: { fontSize: 12, color: Colors.muted, textTransform: 'uppercase', letterSpacing: 1 },
-  cdaValue: { fontSize: 64, fontWeight: '800', color: Colors.teal, fontVariant: ['tabular-nums'] },
-  cdaUnit:  { fontSize: 16, color: Colors.muted },
+
+  sparkCard: {
+    backgroundColor: Colors.s1,
+    borderRadius:    Radius.md,
+    borderWidth:     0.5,
+    borderColor:     Colors.border,
+    padding:         Sp.md,
+    gap:             Sp.sm,
+  },
 
   row: { flexDirection: 'row', gap: Sp.sm },
 
@@ -272,7 +276,7 @@ const styles = StyleSheet.create({
   breakdownRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   breakdownLabelGroup: { flexDirection: 'row', alignItems: 'center' },
   breakdownLabel:      { fontSize: 13, color: Colors.text },
-  breakdownValue:      { fontSize: 13, color: Colors.muted, fontVariant: ['tabular-nums'] },
+  breakdownValue:      { ...monoNum, fontSize: 13, color: Colors.muted },
 
   chartCard: {
     backgroundColor: Colors.s1,
@@ -285,20 +289,29 @@ const styles = StyleSheet.create({
   chartLabel: { fontSize: 11, color: Colors.muted },
 
   lapInfo: {
-    alignItems: 'center',
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'center',
+    gap:             Sp.xs,
     paddingVertical: Sp.xs,
   },
-  lapText: { fontSize: 13, color: Colors.amber, fontVariant: ['tabular-nums'] },
+  recDot:  { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.red },
+  lapText: { ...monoNum, fontSize: 13, color: Colors.amber },
 
   buttonRow: { flexDirection: 'row', gap: Sp.sm },
-  recBtn: {
-    borderRadius:  Radius.md,
-    borderWidth:   1,
+  btn: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'center',
+    gap:             Sp.sm,
+    borderRadius:    Radius.md,
+    borderWidth:     1,
     paddingVertical: Sp.md,
-    alignItems:    'center',
+    minHeight:       56,
   },
-  recText: { fontSize: 16, fontWeight: '700', letterSpacing: 1 },
-
-  simBtn: { alignItems: 'center', paddingVertical: Sp.sm },
-  simText: { fontSize: 12, color: Colors.muted },
+  btnPrimary: { borderColor: Colors.teal, backgroundColor: Colors.tealBg },
+  btnStop:    { borderColor: Colors.red,  backgroundColor: Colors.redBg },
+  btnBig:     { paddingVertical: Sp.lg },
+  btnText:    { fontSize: 16, fontWeight: '700', letterSpacing: 1 },
+  btnTextBig: { fontSize: 20 },
 });

@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Alert, Modal,
+  View, Text, StyleSheet, TouchableOpacity, Alert, Modal, Animated,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { parseDeviceQR, savePairedDevice, PairedDevice } from '../security/pairing';
 import { useStore } from '../store';
 import { Colors, Sp, Radius } from '../theme';
+import { Icon } from '../components/Icon';
 
 interface Props {
   visible:    boolean;
@@ -17,10 +18,24 @@ export function QRPairScreen({ visible, onClose, onPaired }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const setPairedDevice = useStore((s) => s.setPairedDevice);
+  const blink = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (visible) setScanned(false);
   }, [visible]);
+
+  // Dot "in attesa" lampeggiante finché non rileva un codice.
+  useEffect(() => {
+    if (!visible || scanned) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(blink, { toValue: 0.2, duration: 600, useNativeDriver: true }),
+        Animated.timing(blink, { toValue: 1,   duration: 600, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [visible, scanned]);
 
   useEffect(() => {
     if (visible && permission && !permission.granted && permission.canAskAgain) {
@@ -83,10 +98,23 @@ export function QRPairScreen({ visible, onClose, onPaired }: Props) {
               onBarcodeScanned={scanned ? undefined : handleScan}
             />
             <View style={styles.overlay}>
-              <View style={styles.frame} />
-              <Text style={styles.hint}>
-                Inquadra il QR code sul device AeroDrag
-              </Text>
+              <View style={styles.wordmark}>
+                <Icon name="target" size={18} color={Colors.teal} />
+                <Text style={styles.wordmarkText}>AeroDrag</Text>
+              </View>
+
+              <View style={styles.frame}>
+                {/* reticolo di mira agli angoli */}
+                <View style={[styles.corner, styles.cornerTL]} />
+                <View style={[styles.corner, styles.cornerTR]} />
+                <View style={[styles.corner, styles.cornerBL]} />
+                <View style={[styles.corner, styles.cornerBR]} />
+              </View>
+
+              <View style={styles.waitRow}>
+                <Animated.View style={[styles.waitDot, { opacity: blink }]} />
+                <Text style={styles.hint}>In attesa del QR del device…</Text>
+              </View>
             </View>
             <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
               <Text style={styles.closeText}>Chiudi</Text>
@@ -118,10 +146,23 @@ const styles = StyleSheet.create({
   frame: {
     width:        240,
     height:       240,
-    borderWidth:  2,
-    borderColor:  Colors.teal,
-    borderRadius: Radius.md,
   },
+  corner: {
+    position:    'absolute',
+    width:       34,
+    height:      34,
+    borderColor: Colors.teal,
+  },
+  cornerTL: { top: 0,    left: 0,    borderTopWidth: 3, borderLeftWidth: 3,  borderTopLeftRadius: Radius.md },
+  cornerTR: { top: 0,    right: 0,   borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: Radius.md },
+  cornerBL: { bottom: 0, left: 0,    borderBottomWidth: 3, borderLeftWidth: 3,  borderBottomLeftRadius: Radius.md },
+  cornerBR: { bottom: 0, right: 0,   borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: Radius.md },
+
+  wordmark:     { flexDirection: 'row', alignItems: 'center', gap: Sp.xs },
+  wordmarkText: { fontSize: 16, fontWeight: '700', color: Colors.textBright, letterSpacing: 0.5 },
+
+  waitRow: { flexDirection: 'row', alignItems: 'center', gap: Sp.sm },
+  waitDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.red },
   hint: {
     fontSize:        13,
     color:           '#fff',

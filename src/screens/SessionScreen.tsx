@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useStore, LapStats } from '../store';
 import { useShallow } from 'zustand/react/shallow';
-import { Colors, Sp, Radius } from '../theme';
+import { Colors, Sp, Radius, monoNum } from '../theme';
 
 function fmt(n: number, d = 2): string {
   if (!isFinite(n) || n === 0) return '–';
@@ -85,9 +85,12 @@ export function SessionScreen() {
       showsVerticalScrollIndicator={false}
     >
       {/* ── Sessione corrente ── */}
-      <Text style={styles.sectionTitle}>
-        {isRecording ? '⏺ Sessione in corso' : 'Sessione corrente'}
-      </Text>
+      <View style={styles.titleRow}>
+        {isRecording && <View style={styles.recDot} />}
+        <Text style={styles.sectionTitle}>
+          {isRecording ? 'Sessione in corso' : 'Sessione corrente'}
+        </Text>
+      </View>
 
       {hasCurrent ? (
         <>
@@ -196,7 +199,10 @@ const styles = StyleSheet.create({
     gap:             2,
   },
   statLabel: { fontSize: 10, color: Colors.muted },
-  statValue: { fontSize: 18, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  statValue: { ...monoNum, fontSize: 18 },
+
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: Sp.xs, marginTop: Sp.sm },
+  recDot:   { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.red },
 
   lapRow: {
     backgroundColor: Colors.s1,
@@ -210,7 +216,7 @@ const styles = StyleSheet.create({
   lapStats: { flexDirection: 'row', flexWrap: 'wrap', gap: Sp.sm },
   lapStat:  { gap: 2 },
   lapStatLabel: { fontSize: 10, color: Colors.muted },
-  lapStatValue: { fontSize: 14, fontWeight: '600', color: Colors.text, fontVariant: ['tabular-nums'] },
+  lapStatValue: { ...monoNum, fontSize: 14, color: Colors.text },
 
   emptyBox: {
     backgroundColor: Colors.s1,

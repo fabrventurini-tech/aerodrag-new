@@ -1,8 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, View, Text } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { useFonts } from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
+import {
+  JetBrainsMono_400Regular,
+  JetBrainsMono_500Medium,
+  JetBrainsMono_700Bold,
+} from '@expo-google-fonts/jetbrains-mono';
+import {
+  Inter_400Regular,
+  Inter_600SemiBold,
+} from '@expo-google-fonts/inter';
 
 import { useBLE } from './src/hooks/useBLE';
 import { coachAutoConnect } from './src/coach/link';
@@ -16,7 +27,12 @@ import { CoachScreen }    from './src/screens/CoachScreen';
 import { AthletesScreen } from './src/screens/AthletesScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 
-import { Colors, Sp } from './src/theme';
+import { Colors, Sp, monoNum } from './src/theme';
+
+// Tiene visibile la splash finché i font non sono caricati: i `fontFamily`
+// mono (JetBrains) vengono applicati SOLO dopo il load, altrimenti su Android
+// il testo resterebbe invisibile (nessun fallback per famiglie non ancora note).
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function TopBar() {
   const {
@@ -77,6 +93,18 @@ function TopBar() {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('live');
+
+  const [fontsLoaded] = useFonts({
+    JetBrainsMono_400Regular,
+    JetBrainsMono_500Medium,
+    JetBrainsMono_700Bold,
+    Inter_400Regular,
+    Inter_600SemiBold,
+  });
+
+  const onLayoutRootView = useCallback(() => {
+    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded]);
   const {
     loadCalib, loadAthleteProfiles, loadPreviousSessions, loadPairedDeviceId,
     calib, activeAthleteId, athleteProfiles,
@@ -108,8 +136,10 @@ export default function App() {
     coachAutoConnect();  // riconnette alla dashboard coach se un URL era salvato
   }, []);
 
+  if (!fontsLoaded) return null;
+
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
       <SafeAreaProvider>
         <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
           <StatusBar style="light" />
@@ -169,6 +199,6 @@ const topStyles = StyleSheet.create({
     paddingVertical:   3,
   },
   recDot:  { width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.red },
-  recTime: { fontSize: 11, color: Colors.red, fontVariant: ['tabular-nums'] },
-  battery: { fontSize: 11, color: Colors.muted },
+  recTime: { ...monoNum, fontSize: 11, color: Colors.red },
+  battery: { ...monoNum, fontSize: 11, color: Colors.muted },
 });

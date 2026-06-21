@@ -14,7 +14,7 @@ import { QRPairScreen } from './QRPairScreen';
 import { CrrCalibrationScreen } from './CrrCalibrationScreen';
 import { bleApi } from '../hooks/useBLE';
 import { DiscoveredSensor } from '../security/pairing';
-import { Colors, Sp, Radius } from '../theme';
+import { Colors, Sp, Radius, Font, monoNum } from '../theme';
 
 const SENSOR_TYPE_LABEL: Record<SensorEntry['type'], string> = {
   power: 'Potenza',
@@ -459,7 +459,7 @@ const styles = StyleSheet.create({
   row:        { flexDirection: 'row', alignItems: 'center', gap: Sp.sm },
   dot:        { width: 8, height: 8, borderRadius: 4 },
   deviceName: { fontSize: 16, fontWeight: '600', color: Colors.textBright },
-  deviceId:   { fontSize: 11, color: Colors.muted, fontFamily: 'monospace' },
+  deviceId:   { fontSize: 11, color: Colors.muted, fontFamily: Font.mono },
   deviceDate: { fontSize: 11, color: Colors.muted },
 
   emptyText: { fontSize: 13, color: Colors.muted, lineHeight: 20 },
@@ -523,7 +523,7 @@ const styles = StyleSheet.create({
     justifyContent:  'center',
   },
   calibBtnText:  { fontSize: 18, color: Colors.text, lineHeight: 22 },
-  calibValue:    { fontSize: 14, color: Colors.textBright, minWidth: 60, textAlign: 'center', fontVariant: ['tabular-nums'] },
+  calibValue:    { ...monoNum, fontSize: 14, color: Colors.textBright, minWidth: 60, textAlign: 'center' },
 
   switchRow: {
     flexDirection:  'row',
@@ -583,7 +583,7 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.border,
   },
   crrLabel: { fontSize: 11, color: Colors.muted, flex: 1 },
-  crrValue: { fontSize: 18, color: Colors.teal, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  crrValue: { ...monoNum, fontSize: 18, color: Colors.teal },
   crrConf:  { fontSize: 11, color: Colors.amber },
 
   primaryBtn: {
@@ -614,7 +614,7 @@ const styles = StyleSheet.create({
     borderColor:     Colors.teal,
   },
   presetLabel:       { fontSize: 11, fontWeight: '600', color: Colors.muted },
-  presetMm:          { fontSize: 10, color: Colors.muted, fontVariant: ['tabular-nums'] },
+  presetMm:          { ...monoNum, fontSize: 10, color: Colors.muted },
   presetLabelActive: { color: Colors.teal },
 
   scanRoot:   { flex: 1, backgroundColor: Colors.bg },

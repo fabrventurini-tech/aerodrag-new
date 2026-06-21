@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { Colors, Sp } from '../theme';
+import { Icon, IconName } from './Icon';
 
 export type Screen = 'live' | 'session' | 'coach' | 'athletes' | 'settings';
 
@@ -9,12 +10,12 @@ interface Props {
   onNavigate: (s: Screen) => void;
 }
 
-const TABS: { id: Screen; label: string; icon: string }[] = [
-  { id: 'live',     label: 'Live',     icon: '⬤' },
-  { id: 'session',  label: 'Sessione', icon: '📊' },
-  { id: 'coach',    label: 'Coach',    icon: '📡' },
-  { id: 'athletes', label: 'Atleti',   icon: '👤' },
-  { id: 'settings', label: 'Setup',    icon: '⚙️' },
+const TABS: { id: Screen; label: string; icon: IconName }[] = [
+  { id: 'live',     label: 'Live',     icon: 'live' },
+  { id: 'session',  label: 'Sessione', icon: 'session' },
+  { id: 'coach',    label: 'Coach',    icon: 'coach' },
+  { id: 'athletes', label: 'Atleti',   icon: 'athletes' },
+  { id: 'settings', label: 'Setup',    icon: 'settings' },
 ];
 
 export function NavBar({ current, onNavigate }: Props) {
@@ -29,11 +30,16 @@ export function NavBar({ current, onNavigate }: Props) {
             onPress={() => onNavigate(tab.id)}
             activeOpacity={0.7}
           >
-            <Text style={styles.icon}>{tab.icon}</Text>
+            {active && <View style={styles.indicator} />}
+            <Icon
+              name={tab.icon}
+              size={22}
+              color={active ? Colors.teal : Colors.muted}
+              strokeWidth={active ? 2.2 : 1.8}
+            />
             <Text style={[styles.label, active && styles.labelActive]}>
               {tab.label}
             </Text>
-            {active && <View style={styles.indicator} />}
           </TouchableOpacity>
         );
       })}
@@ -43,22 +49,21 @@ export function NavBar({ current, onNavigate }: Props) {
 
 const styles = StyleSheet.create({
   bar: {
-    flexDirection:     'row',
-    backgroundColor:   Colors.s1,
-    borderTopWidth:    0.5,
-    borderTopColor:    Colors.border,
-    paddingBottom:     Sp.sm,
+    flexDirection:   'row',
+    backgroundColor: Colors.s1,
+    borderTopWidth:  0.5,
+    borderTopColor:  Colors.border,
+    paddingBottom:   Sp.sm,
   },
   tab: {
-    flex:           1,
-    alignItems:     'center',
-    paddingTop:     Sp.sm,
-    paddingBottom:  Sp.xs,
-    gap:            2,
+    flex:          1,
+    alignItems:    'center',
+    paddingTop:    Sp.sm,
+    paddingBottom: Sp.xs,
+    gap:           3,
   },
-  icon:  { fontSize: 16 },
-  label: { fontSize: 10, color: Colors.muted },
-  labelActive: { color: Colors.teal },
+  label:       { fontSize: 10, color: Colors.muted },
+  labelActive: { color: Colors.teal, fontWeight: '600' },
   indicator: {
     position:        'absolute',
     top:             0,

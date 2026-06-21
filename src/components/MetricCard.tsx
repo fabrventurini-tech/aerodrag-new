@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Colors, Sp, Radius } from '../theme';
+import { Colors, Sp, Radius, monoNumBold } from '../theme';
 
 interface Props {
   label:    string;
@@ -47,9 +47,8 @@ const styles = StyleSheet.create({
     gap:           4,
   },
   value: {
-    fontSize:   28,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
+    ...monoNumBold,
+    fontSize: 26,
   },
   unit: {
     fontSize: 13,

@@ -6,7 +6,7 @@ import {
 import { useStore } from '../store';
 import { useShallow } from 'zustand/react/shallow';
 import { coachConnect, coachDisconnect, loadCoachUrl, saveCoachUrl } from '../coach/link';
-import { Colors, Sp, Radius } from '../theme';
+import { Colors, Sp, Radius, monoNum } from '../theme';
 
 // La connessione WebSocket vive in src/coach/link.ts a livello modulo:
 // sopravvive al cambio di tab. Questa schermata è solo UI.
@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
   statusText:{ fontSize: 14, color: Colors.text, flex: 1 },
 
   infoRow:  { paddingTop: 2 },
-  infoText: { fontSize: 11, color: Colors.muted, fontVariant: ['tabular-nums'] },
+  infoText: { ...monoNum, fontSize: 11, color: Colors.muted },
 
   dataGrid: {
     flexDirection: 'row',
@@ -214,7 +214,7 @@ const styles = StyleSheet.create({
     gap:             2,
   },
   dataLabel: { fontSize: 10, color: Colors.muted },
-  dataValue: { fontSize: 16, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  dataValue: { ...monoNum, fontSize: 16 },
 
   note: {
     fontSize:   11,

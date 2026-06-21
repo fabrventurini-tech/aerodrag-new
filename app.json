@@ -29,7 +29,9 @@
         {
           "cameraPermission": "AeroDrag usa la fotocamera per rilevare i marker di postura."
         }
-      ]
+      ],
+      "expo-font",
+      "expo-splash-screen"
     ],
     "android": {
       "package": "com.aerodrag.app",
