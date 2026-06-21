@@ -19,6 +19,10 @@
  *   0xaa09 PHYSICS  NOTIFY 10 Hz    28 B:  float×7 cda, vAir, rho, pctAero(0-100), pAero, pRoll, pGrav
  *          tutti 0 se misura non valida
  *   0xaa0a BATTERY  NOTIFY 0.1 Hz    1 B:  uint8 pct 0-100
+ *   0xaa0f COACH_LINK NOTIFY (v0.3.0) 2 B: uint8 type + uint8 arg — relay comandi
+ *          coach→app (0x01 start, 0x02 stop, 0x03 lap). Recisione live app↔Pi.
+ *   0xaa10 TIME     R+W (v0.3.0)     8 B:  uint64 epochMs LE — orologio UTC del
+ *          device; l'app lo scrive on-connect (clock del telefono) → abilita tUtc.
  *
  * Note:
  *   - Tutti i multi-byte little-endian; float IEEE-754 32 bit raw.
@@ -61,6 +65,8 @@ const CHR_WHEEL_STREAM = '0000aa0c-0000-1000-8000-00805f9b34fb';  // relay strea
 const CHR_WHEEL_CMD    = '0000aa0d-0000-1000-8000-00805f9b34fb';  // comando coast-down (v0.2.0)
 
 const CHR_SENSOR_SCAN  = '0000aa0e-0000-1000-8000-00805f9b34fb';  // discovery sensori firmware (v0.2.2)
+const CHR_COACH_LINK   = '0000aa0f-0000-1000-8000-00805f9b34fb';  // relay comandi coach→app (v0.3.0)
+const CHR_TIME         = '0000aa10-0000-1000-8000-00805f9b34fb';  // orologio UTC oggettivo (v0.3.0)
 
 // Comandi coast-down inoltrati al sensore ruota via WHEEL_CMD 0xaa0d
 export const WHEEL_CMD = {
@@ -329,6 +335,24 @@ export function useBLE() {
       if (wheelFreshRef.current) clearTimeout(wheelFreshRef.current);
       wheelFreshRef.current = setTimeout(() => setWheelSensorStatus('idle'), 2000);
     });
+    // CHR_COACH_LINK (0xaa0f, v0.3.0): relay dei comandi coach via firmware.
+    // Con la recisione del live app↔Pi (§3) l'app è solo-BLE: i comandi del coach
+    // (start/stop/lap) non arrivano più dal /coach del Pi ma in NOTIFY qui.
+    // Payload 2 B esatti: uint8 type + uint8 arg. Set esaustivo: 0x01 start,
+    // 0x02 stop, 0x03 lap. REC si DERIVA da start/stop. type sconosciuti →
+    // ignorati (riservati, forward-compat). NOTIFY-only: non si scrive su 0xaa0f.
+    subscribe(CHR_COACH_LINK, (v) => {
+      const buf = Buffer.from(v, 'base64');
+      if (buf.length < 2) return;
+      const type = buf.readUInt8(0);   // arg = buf.readUInt8(1) — non usato (lapNum non noto)
+      const st = useStore.getState();
+      switch (type) {
+        case 0x01: if (!st.isRecording) st.startSession(); break;  // start → REC on
+        case 0x02: if (st.isRecording)  st.stopSession();  break;  // stop  → REC off
+        case 0x03: if (st.isRecording)  st.addLap();       break;  // lap
+        default: break;  // riservati → ignora
+      }
+    });
     // CHR_IDENTITY (0xaa05) is READ+WRITE only — read once in connect(), not here
   }
 
@@ -400,6 +424,12 @@ export function useBLE() {
       subscribeAll(connected);
       startAntPolling(connected);
 
+      // TIME 0xaa10 (contract v0.3.0): il telefono ha un clock affidabile →
+      // imposta l'orologio UTC del device alla connessione. Abilita `tUtc` nei
+      // frame /device (ordinamento/dedup assoluti lato cloud). Best-effort: gli
+      // errori ATT (len≠8 / epoch<2020) sono gestiti senza far cadere il connect.
+      await writeDeviceTime(connected);
+
       // CONFIG 0xaa08 (contract v0.2.0): l'app è autorevole per TUTTI e tre i
       // parametri (mass/crr/wheelCircM). NON adottiamo più il wheelCircM dal
       // device — la READ è solo default/echo; è l'app a scrivere il proprio
@@ -444,6 +474,23 @@ export function useBLE() {
     } catch {
       setBleStatus('error');
     }
+  }
+
+  // ── Scrittura orologio UTC → ESP32 (TIME 0xaa10, v0.3.0) ───────────────────
+  // uint64 epochMs little-endian, ESATTAMENTE 8 byte. Scritto come due word LE
+  // (evita dipendenze da BigInt/writeBigUInt64LE). Date.now() è ben oltre la
+  // soglia firmware del 2020 → la WRITE è accettata; eventuali errori ATT sono
+  // assorbiti (best-effort, non blocca la connessione).
+  async function writeDeviceTime(device: Device): Promise<void> {
+    try {
+      const ms  = Date.now();
+      const buf = Buffer.alloc(8);
+      buf.writeUInt32LE(ms >>> 0, 0);                       // 32 bit bassi
+      buf.writeUInt32LE(Math.floor(ms / 0x100000000), 4);  // 32 bit alti
+      await device.writeCharacteristicWithResponseForService(
+        SVC, CHR_TIME, buf.toString('base64')
+      );
+    } catch {}
   }
 
   // ── Scrittura config → ESP32 ──────────────────────────────────────────────

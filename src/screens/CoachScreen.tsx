@@ -17,12 +17,12 @@ export function CoachScreen() {
   const {
     physics, sensor, history, isRecording,
     activeAthleteId, athleteProfiles,
-    batteryPct, currentLap,
+    batteryPct, currentLap, isSimMode,
     coachStatus: status, coachErrorMsg: errorMsg,
   } = useStore(useShallow((s) => ({
     physics: s.physics, sensor: s.sensor, history: s.history, isRecording: s.isRecording,
     activeAthleteId: s.activeAthleteId, athleteProfiles: s.athleteProfiles,
-    batteryPct: s.batteryPct, currentLap: s.currentLap,
+    batteryPct: s.batteryPct, currentLap: s.currentLap, isSimMode: s.isSimMode,
     coachStatus: s.coachStatus, coachErrorMsg: s.coachErrorMsg,
   })));
 
@@ -60,36 +60,56 @@ export function CoachScreen() {
     >
       <Text style={styles.sectionTitle}>Dashboard Coach</Text>
 
-      {/* ── URL WebSocket ── */}
-      <View style={styles.card}>
-        <Text style={styles.label}>URL server coach</Text>
-        <TextInput
-          style={styles.input}
-          value={url}
-          onChangeText={setUrl}
-          placeholder="ws://192.168.8.1:8080/coach"
-          placeholderTextColor={Colors.muted}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-        />
-        <View style={styles.btnRow}>
-          <TouchableOpacity style={styles.btn} onPress={handleSave}>
-            <Text style={styles.btnText}>Salva e connetti</Text>
-          </TouchableOpacity>
-          {status !== 'idle' && (
-            <TouchableOpacity
-              style={[styles.btn, { backgroundColor: Colors.redBg, borderColor: Colors.red }]}
-              onPress={handleDisconnect}
-            >
-              <Text style={[styles.btnText, { color: Colors.red }]}>Disconnetti</Text>
+      {/* ── Banner v0.3.0: app solo-BLE ── */}
+      <View style={styles.banner}>
+        <Text style={styles.bannerText}>
+          v0.3.0 — app <Text style={styles.bannerStrong}>solo-BLE</Text>. La
+          telemetria live verso il Pi arriva dall'ESP32 (uplink primario): l'app
+          non streamma più al Pi. I comandi del coach (start/stop/lap) arrivano
+          via BLE. La connessione <Text style={styles.bannerStrong}>/coach</Text>
+          {' '}qui sotto è un fallback di sola <Text style={styles.bannerStrong}>simulazione</Text>.
+        </Text>
+      </View>
+
+      {/* ── URL WebSocket (solo in simulazione — fallback legacy) ── */}
+      {isSimMode ? (
+        <View style={styles.card}>
+          <Text style={styles.label}>URL server coach (fallback sim)</Text>
+          <TextInput
+            style={styles.input}
+            value={url}
+            onChangeText={setUrl}
+            placeholder="ws://192.168.8.1:8080/coach"
+            placeholderTextColor={Colors.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+          />
+          <View style={styles.btnRow}>
+            <TouchableOpacity style={styles.btn} onPress={handleSave}>
+              <Text style={styles.btnText}>Salva e connetti</Text>
             </TouchableOpacity>
+            {status !== 'idle' && (
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: Colors.redBg, borderColor: Colors.red }]}
+                onPress={handleDisconnect}
+              >
+                <Text style={[styles.btnText, { color: Colors.red }]}>Disconnetti</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {saved !== '' && (
+            <Text style={styles.savedUrl}>{saved}</Text>
           )}
         </View>
-        {saved !== '' && (
-          <Text style={styles.savedUrl}>{saved}</Text>
-        )}
-      </View>
+      ) : (
+        <View style={styles.card}>
+          <Text style={styles.hint}>
+            Connessione /coach disabilitata in uso normale. Attiva la Modalità
+            simulazione (Setup) per usare il fallback senza ESP32.
+          </Text>
+        </View>
+      )}
 
       {/* ── Stato connessione ── */}
       <View style={styles.card}>
@@ -191,6 +211,17 @@ const styles = StyleSheet.create({
   },
   btnText:  { color: Colors.teal, fontWeight: '600' },
   savedUrl: { fontSize: 11, color: Colors.muted, fontStyle: 'italic' },
+
+  banner: {
+    backgroundColor: Colors.blueBg,
+    borderRadius:    Radius.md,
+    borderWidth:     0.5,
+    borderColor:     Colors.blue + '55',
+    padding:         Sp.md,
+  },
+  bannerText:   { fontSize: 12, color: Colors.text, lineHeight: 18 },
+  bannerStrong: { color: Colors.blue, fontWeight: '700' },
+  hint:         { fontSize: 12, color: Colors.muted, lineHeight: 18 },
 
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: Sp.sm },
   dot:       { width: 8, height: 8, borderRadius: 4 },

@@ -1,23 +1,26 @@
 /**
- * link.ts — connessione WebSocket persistente verso la dashboard coach (Pi).
+ * link.ts — connessione WebSocket verso il /coach del Pi.
+ *
+ * ⚠️ DEPRECATO in contract v0.3.0 (§3 — recisione del live app↔Pi). L'app è ora
+ * **solo-BLE** verso il proprio ESP32 e NON è più il producer live verso il Pi:
+ * l'uplink primario è l'ESP32 su /device. Questo modulo resta SOLO come fallback
+ * LEGACY di **simulazione** (app senza ESP32) ed è OFF di default — non si apre
+ * alcuna connessione fuori da sim mode (così il telefono conserva la sua rete).
+ * I comandi del coach (start/stop/lap) arrivano ora via BLE (COACH_LINK 0xaa0f),
+ * non più da questo /coach. Rimozione prevista in un MAJOR futuro.
  *
  * La connessione vive a livello modulo, NON dentro CoachScreen: il socket
- * sopravvive al cambio di tab (App.tsx monta le schermate condizionalmente,
- * quindi qualsiasi risorsa creata dentro CoachScreen morirebbe appena
- * l'atleta torna alla schermata Live). CoachScreen è solo UI: mostra lo
- * stato dal global store e chiama coachConnect / coachDisconnect.
+ * sopravvive al cambio di tab. CoachScreen è solo UI.
  *
- * Protocollo (vedi review dashboard):
+ * Protocollo (solo nel fallback sim):
  *   App → Pi  hello:  { type:'hello', device, athlete }
  *   App → Pi  data:   { t, device, athlete, lap, CdA, pwr, spd, hr, cad,
  *                       wind, battery, pctAero, pitch, rho, lapEvent }
- *                     @ 2 Hz, solo se physics.valid  (contract v0.1.0)
+ *                     @ 2 Hz, solo se physics.valid
  *   Pi → App  cmd:    { type:'cmd', action:'start'|'stop'|'lap' }
  *
  * Identità (contract v0.1.2 §3): il campo `device` è OBBLIGATORIO e DEVE essere
- * un MAC valido. Il Pi rifiuta all'ingestione i frame senza `device` valido
- * (nessuna sessione anonima), quindi l'app NON invia né `hello` né frame finché
- * non è accoppiata a un device con MAC valido (il pairing QR fornisce il MAC).
+ * un MAC valido. Il Pi rifiuta all'ingestione i frame senza `device` valido.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -47,8 +50,12 @@ export async function saveCoachUrl(url: string): Promise<void> {
   await AsyncStorage.setItem(KEY_COACH_URL, url);
 }
 
-/** Riconnette all'avvio dell'app se un URL era stato salvato. */
+/**
+ * Riconnette all'avvio SOLO in simulazione (fallback legacy v0.3.0). In uso
+ * normale l'app è solo-BLE: nessun auto-connect al /coach (OFF di default).
+ */
 export function coachAutoConnect(): void {
+  if (!useStore.getState().isSimMode) return;
   loadCoachUrl().then((u) => {
     if (u) coachConnect(u);
   });
@@ -146,6 +153,14 @@ export function coachConnect(targetUrl: string): void {
   manualDisconnect = false;
 
   const { setCoachStatus } = useStore.getState();
+
+  // v0.3.0 §3 — recisione del live app↔Pi: fuori da sim mode l'app NON apre il
+  // /coach (resta solo-BLE sul proprio ESP32). Il /coach è un fallback di sola
+  // simulazione.
+  if (!useStore.getState().isSimMode) {
+    setCoachStatus('error', 'Disponibile solo in simulazione (v0.3.0: app solo-BLE)');
+    return;
+  }
 
   if (!targetUrl.startsWith('ws://') && !targetUrl.startsWith('wss://')) {
     setCoachStatus('error', 'URL deve iniziare con ws:// o wss://');
