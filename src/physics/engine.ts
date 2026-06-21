@@ -74,8 +74,8 @@ function airDensity(tempC: number, humidity: number, altM: number): number {
   const es = 610.78 * Math.exp((17.27 * t) / (t + 237.3));
   const pv = (rh / 100) * es;
   const rho = (p - 0.378 * pv) / (R_AIR * T);
-  // Sanity: fuori range → densità standard
-  return rho > 0.8 && rho < 1.5 ? rho : RHO_STD;
+  // Sanity: fuori range [0.8, 1.4] → densità standard (coerente con §6 physics_compute)
+  return rho >= 0.8 && rho <= 1.4 ? rho : RHO_STD;
 }
 
 export function computePhysics(
@@ -89,10 +89,10 @@ export function computePhysics(
     vAirMs: 0, rhoKgM3: 0, pctAero: 0, valid: false,
   };
 
-  // Densità aria (barometrica da altitudine, come sul device); sanity clamp
-  // finale a [0.8, 1.4] come in physics_compute
-  let rho = airDensity(s.tempC, s.humidity, s.altM);
-  if (rho < 0.8 || rho > 1.4) rho = RHO_STD;
+  // Densità aria (barometrica da altitudine, come sul device). airDensity()
+  // applica già il sanity clamp unico a [0.8, 1.4] (§6 physics_compute):
+  // nessun ri-clamp qui per evitare soglie divergenti.
+  const rho = airDensity(s.tempC, s.humidity, s.altM);
 
   // Pitot: v_air = sqrt(2·ΔP/ρ). L'offset Pitot è già applicato a monte
   // (store.updateSensors), qui ci limitiamo a scartare i valori negativi.

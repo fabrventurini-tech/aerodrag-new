@@ -76,7 +76,9 @@ export function fitCrrFromRun(
     durationS: 0, rSquared: 0, avgTempC: 0, avgVibRMS: 0, valid: false,
   };
 
-  const minSpeed = params.minSpeedMs ?? 2.0;
+  // `?? 2.0` cattura solo null/undefined: un `0` esplicito disattiverebbe il
+  // filtro velocità. Soglia di default anche per valori non positivi.
+  const minSpeed = params.minSpeedMs > 0 ? params.minSpeedMs : 2.0;
   const slopeRad = (params.slopeDeg * Math.PI) / 180;
   const cosT = Math.cos(slopeRad);
   const sinT = Math.sin(slopeRad);
@@ -127,8 +129,10 @@ export function fitCrrFromRun(
 
   const avgTempC = valid.reduce((s, x) => s + x.tempC, 0) / valid.length;
   const avgVibRMS = valid.reduce((s, x) => s + x.vibRMS, 0) / valid.length;
-  const first = samples[0];
-  const last  = samples[samples.length - 1];
+  // Metadati run dal subset filtrato `valid` (≥15 qui), non dai `samples` grezzi:
+  // così durata/velocità riportate escludono spin-up e coda sotto-soglia.
+  const first = valid[0];
+  const last  = valid[valid.length - 1];
 
   return {
     crr:          Math.max(0.001, Math.min(0.025, crr)),
