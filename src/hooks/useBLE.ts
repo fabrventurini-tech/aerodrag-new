@@ -177,7 +177,10 @@ function parseSensorScanEntry(b64: string): DiscoveredSensor | null {
     .toUpperCase();
   const rssi    = buf.readInt8(7);
   const nameLen = buf.readUInt8(8);
-  const name    = buf.length >= 9 + nameLen && nameLen > 0
+  // Entry troncata dopo nameLen → scarta (come gli altri parser), niente degrado
+  // silenzioso con nome di fallback su un pacchetto incompleto.
+  if (nameLen > 0 && buf.length < 9 + nameLen) return null;
+  const name = nameLen > 0
     ? buf.toString('utf8', 9, 9 + nameLen)
     : `Sensore ${mac.slice(-5)}`;
   return { type, mac, name, rssi };
