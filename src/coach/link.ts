@@ -14,7 +14,7 @@
  *
  * Protocollo (solo nel fallback sim):
  *   App → Pi  hello:  { type:'hello', device, athlete }
- *   App → Pi  data:   { t, device, athlete, lap, CdA, pwr, spd, hr, cad,
+ *   App → Pi  data:   { t, tUtc, device, athlete, lap, CdA, pwr, spd, hr, cad,
  *                       wind, battery, pctAero, pitch, rho, lapEvent }
  *                     @ 2 Hz, solo se physics.valid
  *   Pi → App  cmd:    { type:'cmd', action:'start'|'stop'|'lap' }
@@ -108,8 +108,13 @@ function startDataLoop(): void {
     const lapEvent = lap > prevLapSent;
     prevLapSent = lap;
 
+    // tUtc: timestamp oggettivo UTC (§3, audit v0.3.1) — presente anche sul
+    // percorso legacy /coach (sim). 0 se il clock non è valido (< 2020) → il
+    // consumer deriva il `ts` dal fallback serverTs.
+    const nowMs = Date.now();
     ws.send(JSON.stringify({
-      t:        Date.now(),
+      t:        nowMs,
+      tUtc:     nowMs >= 1577836800000 ? nowMs : 0,
       device:   devId,
       athlete:  athleteName,
       lap,

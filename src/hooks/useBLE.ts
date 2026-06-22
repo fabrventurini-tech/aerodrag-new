@@ -392,6 +392,10 @@ export function useBLE() {
   async function connect(device: Device) {
     try {
       setBleStatus('connecting');
+      // APP-3 (audit v0.3.1): azzera eventuali subscription residue PRIMA di
+      // riconnettere → niente accumulo di listener su reconnect o su connect
+      // fallito a metà (es. read IDENTITY ko che ritorna senza disconnect event).
+      cleanupSubs();
       // MTU ≥ 53 obbligatorio: PHYSICS (28 B) e READ IDENTITY (50 B)
       // arriverebbero troncate con l'MTU default di 23
       const connected = await device.connect({ autoConnect: false, requestMTU: 185 });
@@ -487,6 +491,10 @@ export function useBLE() {
   async function writeDeviceTime(device: Device): Promise<void> {
     try {
       const ms  = Date.now();
+      // APP-1 (audit v0.3.1): non tentare la WRITE se il clock del telefono non
+      // è valido (< 2020-01-01): eviterebbe l'errore ATT VALUE_NOT_ALLOWED e
+      // lascia tUtc=0 sul device → consumer usa il fallback serverTs.
+      if (ms < 1577836800000) return;
       const buf = Buffer.alloc(8);
       buf.writeUInt32LE(ms >>> 0, 0);                       // 32 bit bassi
       buf.writeUInt32LE(Math.floor(ms / 0x100000000), 4);  // 32 bit alti
