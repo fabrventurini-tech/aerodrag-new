@@ -259,12 +259,3 @@ export function surfaceLabelFromCrr(crr: number): string {
   if (crr < 0.0080) return 'Asfalto mediocre';
   return 'Sterrato / acciottolato';
 }
-
-/**
- * Temperatura in pista influenza il Crr della gomma (~1% per °C).
- * Restituisce il Crr corretto a temperatura di riferimento (20°C).
- */
-export function normalizeCrrToTemp(crr: number, tempC: number, refTempC = 20): number {
-  const delta = tempC - refTempC;
-  return crr * (1 - 0.01 * delta);
-}
