@@ -638,18 +638,19 @@ export function useBLE() {
         if (err) { setBleStatus('error'); return; }
         if (!device) return;
 
-        const wantMac = pairedIdRef.current?.toUpperCase() ?? null;
-
         if (confirmedNativeIdRef.current) {
           // Device già confermato in precedenza: fast-path sul device.id
           // nativo (vale anche su iOS, dove è un UUID stabile per-installazione).
           if (device.id !== confirmedNativeIdRef.current) return;
         } else {
           if (rejectedIdsRef.current.has(device.id)) return;
-          // Android: device.id È il MAC → pre-filtra sul MAC del QR.
-          // iOS: device.id è un UUID → non si filtra qui; ci si connette e si
-          // verifica l'identità leggendo 0xaa05 in connect().
-          if (wantMac && Platform.OS === 'android' && device.id.toUpperCase() !== wantMac) return;
+          // NESSUN pre-filtro per MAC qui: `device.id` è l'id di trasporto BLE,
+          // platform-specific, e NON è l'identità (CONTRACT §2 v0.1.4). Su iOS è
+          // un UUID; su Android l'adv MAC dell'ESP32 = MAC identità +2, quindi un
+          // confronto col MAC del QR scarterebbe sempre il device giusto. Ci si
+          // connette a ogni candidato col service-UUID corretto e si verifica
+          // l'identità leggendo `IDENTITY 0xaa05` in connect() (che tiene la
+          // connessione solo se `== MAC del QR`, altrimenti → rejectedIdsRef).
         }
 
         manager.current?.stopDeviceScan();
