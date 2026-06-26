@@ -38,6 +38,10 @@ interface Props {
 // ── Costanti UI ───────────────────────────────────────────────────────────────
 
 const COAST_DOWN_S_MAX = 90;
+// #35: durante il coast lo stream wheel arriva a ~10 Hz; se non arriva un frame
+// per oltre questa soglia, lo stream è considerato interrotto (la freschezza lato
+// useBLE scade a 2 s) → si aborta il run.
+const WHEEL_STALE_MS = 2500;
 
 export const QUALITY_OPTIONS = [
   { label: 'Ottima',   kmh: 30, desc: 'Massima precisione · ~160 s per run'  },
@@ -51,12 +55,13 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
   const {
     crrCalib, wheelStream, wheelSensorStatus, crrSource,
     startCrrCalib, setCrrTargetSpeed, readyForSpinup, startCrrRun, finalizeCrrRun,
-    applyCrrResult, resetCrrCalib, loadCrrHistory,
+    abortCrrRun, applyCrrResult, resetCrrCalib, loadCrrHistory,
   } = useStore(useShallow((s) => ({
     crrCalib: s.crrCalib, wheelStream: s.wheelStream, wheelSensorStatus: s.wheelSensorStatus,
     crrSource: s.crrSource,
     startCrrCalib: s.startCrrCalib, setCrrTargetSpeed: s.setCrrTargetSpeed,
     readyForSpinup: s.readyForSpinup, startCrrRun: s.startCrrRun, finalizeCrrRun: s.finalizeCrrRun,
+    abortCrrRun: s.abortCrrRun,
     applyCrrResult: s.applyCrrResult, resetCrrCalib: s.resetCrrCalib, loadCrrHistory: s.loadCrrHistory,
   })));
 
@@ -65,15 +70,28 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const finalizingRef    = useRef(false);   // guardia idempotente per l'auto-stop
   const lowSpeedCountRef = useRef(0);        // campioni consecutivi sotto soglia
+  // #35 watchdog: epoch dell'ultimo frame wheel; se durante il coast lo stream
+  // si ferma (timeout/disconnessione/reboot del sensore) e speedMs resta congelato
+  // >2 m/s, l'auto-finalize non scatterebbe mai → run abortito.
+  const lastWheelTsRef   = useRef(0);
 
   useEffect(() => {
     if (visible) loadCrrHistory();
   }, [visible]);
 
+  // #35: ogni frame wheel aggiorna il timestamp (l'oggetto wheelStream cambia
+  // identità a ogni updateWheelStream) → base del watchdog stream-stantio.
+  useEffect(() => {
+    lastWheelTsRef.current = Date.now();
+  }, [wheelStream]);
+
   // Animazione pulsante durante il coast-down
   useEffect(() => {
     const isCoasting = ['coast_indoor', 'coast_outdoor_a', 'coast_outdoor_b'].includes(crrCalib.mode);
     if (isCoasting) {
+      // Resetta la base del watchdog all'ingresso nel coast (evita falsi abort se
+      // l'ultimo frame è momentaneamente vecchio mentre parte il coast-down).
+      lastWheelTsRef.current = Date.now();
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 1.08, duration: 600, useNativeDriver: true }),
@@ -107,6 +125,17 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
       lowSpeedCountRef.current = 0;
       return;
     }
+
+    // #35 watchdog stream-stantio: `coastTimer` avanza ogni 1 s (dipendenza di
+    // questo effect) anche se `speedMs` resta congelato → controlliamo l'età
+    // dell'ultimo frame. Se lo stream si è fermato, abortiamo il run (una sola
+    // volta) invece di restare bloccati in CoastPhase.
+    if (!finalizingRef.current && Date.now() - lastWheelTsRef.current > WHEEL_STALE_MS) {
+      finalizingRef.current = true;
+      handleStaleAbort();
+      return;
+    }
+
     if (wheelStream.speedMs < 2.0) lowSpeedCountRef.current += 1;
     else                          lowSpeedCountRef.current = 0;
 
@@ -142,13 +171,41 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
       : crrCalib.protocol === 'outdoor'
         ? WHEEL_CMD.START_OUTDOOR_A
         : WHEEL_CMD.START_INDOOR;
-    await sendCommand(cmd);
+    // #35: NON entrare in coast se il comando non è andato a buon fine (device
+    // assente / write fallita) — altrimenti si registrerebbe un run vuoto.
+    const ok = await sendCommand(cmd);
+    if (!ok) {
+      Alert.alert(
+        'Comando non inviato',
+        'Il device AeroDrag non ha ricevuto il comando di coast-down. Verifica la connessione e riprova.'
+      );
+      return;
+    }
     startCrrRun();
   }
 
   function handleStopRun() {
     sendCommand(WHEEL_CMD.CANCEL);
-    finalizeCrrRun();
+    // #35: feedback se il run è scartato (non valido) → l'utente sa che deve
+    // ripeterlo (finalizeCrrRun riporta a spinto senza consumare uno slot).
+    const run = finalizeCrrRun();
+    if (run && !run.valid) {
+      Alert.alert(
+        'Run non valido',
+        'Campioni insufficienti o segnale instabile durante il coast-down. Ripeti il run.'
+      );
+    }
+  }
+
+  // #35: stream del sensore ruota interrotto durante il coast → annulla il comando,
+  // scarta il run (senza consumare uno slot) e avvisa.
+  function handleStaleAbort() {
+    sendCommand(WHEEL_CMD.CANCEL);
+    abortCrrRun();
+    Alert.alert(
+      'Sensore ruota: segnale perso',
+      'Lo stream del sensore si è interrotto durante il coast-down. Il run è stato annullato — verifica il sensore e ripeti.'
+    );
   }
 
   function handleApply() {

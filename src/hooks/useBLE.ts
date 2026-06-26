@@ -239,14 +239,14 @@ export function useBLE() {
 
   const {
     setBleStatus, setBattery, updateSensors, setPhysicsFromDevice,
-    setDeviceIdentity, updateWheelStream, setWheelSensorStatus,
+    setDeviceIdentity, updateWheelStream, setWheelSensorStatus, setWheelSensorId,
     tick, isSimMode, pairedDeviceId,
     activeAthleteId, athleteProfiles,
   } = useStore(useShallow((s) => ({
     setBleStatus: s.setBleStatus, setBattery: s.setBattery,
     updateSensors: s.updateSensors, setPhysicsFromDevice: s.setPhysicsFromDevice,
     setDeviceIdentity: s.setDeviceIdentity, updateWheelStream: s.updateWheelStream,
-    setWheelSensorStatus: s.setWheelSensorStatus,
+    setWheelSensorStatus: s.setWheelSensorStatus, setWheelSensorId: s.setWheelSensorId,
     tick: s.tick, isSimMode: s.isSimMode, pairedDeviceId: s.pairedDeviceId,
     activeAthleteId: s.activeAthleteId, athleteProfiles: s.athleteProfiles,
   })));
@@ -475,6 +475,12 @@ export function useBLE() {
         stopAntPolling();
         deviceRef.current = null;
         setDeviceIdentity(null);   // l'identità sarà riletta da 0xaa05 al reconnect
+        // #35: lo stream del sensore ruota è relayato dal device principale →
+        // alla sua disconnessione il wheel non è più "connesso" (evita stato
+        // stantio nella UI). Il freshness-timeout viene annullato.
+        if (wheelFreshRef.current) { clearTimeout(wheelFreshRef.current); wheelFreshRef.current = null; }
+        setWheelSensorStatus('idle');
+        setWheelSensorId(null);
         setBleStatus('scanning');
         startScan();
       });
@@ -542,6 +548,9 @@ export function useBLE() {
   async function writeSensorWhitelist(device: Device): Promise<void> {
     try {
       const list = (await loadSensorWhitelist()).slice(0, SENSOR_WL_MAX);
+      // #35: l'id del sensore ruota (per la UI "Connesso · …xxxx") viene dalla
+      // whitelist autorizzata, non da una connessione diretta (l'app è broker).
+      setWheelSensorId(list.find((s) => s.type === 'wheel')?.id ?? null);
       const entries: { type: number; mac: number[] }[] = [];
       for (const s of list) {
         const mac  = macToWhitelistBytes(s.id);
