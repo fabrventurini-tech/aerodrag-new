@@ -201,7 +201,8 @@ interface AeroDragStore {
   setCrrTargetSpeed: (kmh: number) => void;
   readyForSpinup:   () => void;
   startCrrRun:      () => void;
-  finalizeCrrRun:   () => void;
+  finalizeCrrRun:   () => CrrRunResult;   // ritorna il run per il feedback UI (valid/no)
+  abortCrrRun:      () => void;           // scarta il run corrente → torna a spinup (stream perso)
   applyCrrResult:   () => void;
   resetCrrCalib:    () => void;
   loadCrrHistory:   () => Promise<void>;
@@ -356,6 +357,17 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     };
 
     const runResult = fitCrrFromRun(crrCalib.activeSamples, params);
+
+    // Guardia (#35): un run NON valido (campioni insufficienti — fitCrrFromRun
+    // richiede ≥15 — fit scarso, o stream assente) NON consuma uno slot del
+    // protocollo: si torna a spinup per ripeterlo. Evita di "completare" la
+    // calibrazione su run vuoti/insufficienti (es. coast senza stream → done con
+    // Crr fallback spazzatura). Il chiamante usa il ritorno per avvisare l'utente.
+    if (!runResult.valid) {
+      set((st) => ({ crrCalib: { ...st.crrCalib, mode: 'spinup', activeSamples: [] } }));
+      return runResult;
+    }
+
     let nextState: Partial<CrrCalibState>;
 
     if (crrCalib.protocol === 'indoor') {
@@ -392,6 +404,13 @@ export const useStore = create<AeroDragStore>((set, get) => ({
     }
 
     set((st) => ({ crrCalib: { ...st.crrCalib, ...nextState } }));
+    return runResult;
+  },
+
+  // #35: scarta il run in corso senza fittarlo (stream sensore perso/instabile) →
+  // torna a spinup SENZA consumare uno slot del protocollo.
+  abortCrrRun: () => {
+    set((st) => ({ crrCalib: { ...st.crrCalib, mode: 'spinup', activeSamples: [] } }));
   },
 
   applyCrrResult: () => {

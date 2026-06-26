@@ -15,12 +15,14 @@
  * autorevole; il filtro MAC riduce le connessioni accidentali ma non è una
  * misura anti-sniffing.
  *
- * Wheel sensor (sensore ruota Crr):
- *   - Pairing NON esclusivo: il sensore ruota usa BLE aperto senza bonding
- *   - Qualsiasi app compatibile (Wahoo, Garmin, Strava) può leggere il profilo CSC standard
- *   - L'app AeroDrag salva un "sensore preferito" per riconnettersi automaticamente
- *   - Ma non blocca altri device dal leggere il sensore
- *   - Il sensore può essere accoppiato a più app contemporaneamente
+ * Sensori esterni (potenza/CSC/HR/ruota Crr) — modello broker (contract v0.2.0+):
+ *   - I sensori si bondano SOLO al firmware del device, non all'app.
+ *   - L'app è BROKER di pairing: la scoperta la fa il firmware (SENSOR_SCAN
+ *     0xaa0e), l'utente sceglie e l'app scrive i MAC autorizzati nella whitelist
+ *     del firmware (SENSOR_WHITELIST 0xaa0b, `SensorEntry` type 4 per la ruota Crr).
+ *   - L'app NON apre connessioni dati ai sensori: i dati arrivano relayati dal
+ *     firmware (es. ruota Crr su WHEEL_STREAM 0xaa0c, servizio custom 0xBB00 lato
+ *     sensore — NON il profilo CSC standard).
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -28,10 +30,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const KEY_PAIRED_DEVICE    = 'aerodrag:paired_device_id';
 const KEY_PAIRED_NAME      = 'aerodrag:paired_device_name';
 const KEY_SENSOR_WHITELIST = 'aerodrag:sensor_whitelist';
-const KEY_WHEEL_SENSORS    = 'aerodrag:wheel_sensors';      // lista sensori ruota
-const KEY_WHEEL_ACTIVE_ID  = 'aerodrag:wheel_active_id';   // ID del sensore preferito
-// KEY_WHEEL_SENSOR (legacy, singolo) letto in migrazione automatica
-const KEY_WHEEL_SENSOR_OLD = 'aerodrag:wheel_sensor';
 
 export interface PairedDevice {
   id:   string;   // MAC address BLE del device AeroDrag
@@ -98,102 +96,12 @@ export async function clearSensorWhitelist(): Promise<void> {
   await AsyncStorage.removeItem(KEY_SENSOR_WHITELIST);
 }
 
-// ── Wheel sensor (sensore ruota Crr) — pairing non esclusivo e MULTIPLO ──────
-//
-// Design:
-//   - L'app mantiene una LISTA di sensori ruota registrati (per bici diverse)
-//   - Uno dei sensori è "attivo" → l'app lo preferisce durante la scan
-//   - Il sensore firmware accetta fino a 3 centrali simultanei (MAX_PRPH_CONNECTIONS)
-//   - Non c'è bonding → qualsiasi app (Wahoo, Garmin, coach, atleta) si connette
-//   - Lato app, la lista serve solo come "memoria" per identificare rapidamente
-//     un sensore già visto — non è un filtro di sicurezza
-//
-// Casi d'uso multi-sensore:
-//   • Atleta con 2 bici → sensore ruota A (bici strada) + B (bici crono)
-//   • Team con più atleti → ogni atleta ha il suo sensore, il coach switcha
-//   • Coaching remoto → coach e atleta connettono entrambi allo stesso sensore
-
-export interface WheelSensorDevice {
-  id:        string;   // MAC address BLE
-  name:      string;   // es. "Wheel Bici Strada", "Wheel Bici Crono"
-  pairedAt:  number;   // timestamp Unix
-  firmware?: string;
-  bikeLabel?: string;  // etichetta opzionale (es. "Factor O2", "Cervélo P5")
-}
-
-// Carica tutta la lista (con migrazione automatica dal formato legacy singolo)
-export async function loadWheelSensorList(): Promise<WheelSensorDevice[]> {
-  try {
-    const raw = await AsyncStorage.getItem(KEY_WHEEL_SENSORS);
-    if (raw) return JSON.parse(raw) as WheelSensorDevice[];
-
-    // Migrazione: se esiste il vecchio formato singolo, lo importa nella lista
-    const legacy = await AsyncStorage.getItem(KEY_WHEEL_SENSOR_OLD);
-    if (legacy) {
-      const device = JSON.parse(legacy) as WheelSensorDevice;
-      const list = [device];
-      await AsyncStorage.setItem(KEY_WHEEL_SENSORS, JSON.stringify(list));
-      await AsyncStorage.removeItem(KEY_WHEEL_SENSOR_OLD);
-      return list;
-    }
-    return [];
-  } catch {
-    return [];
-  }
-}
-
-// Aggiunge o aggiorna un sensore nella lista
-export async function saveWheelSensor(device: WheelSensorDevice): Promise<void> {
-  const list = await loadWheelSensorList();
-  const idx  = list.findIndex((s) => s.id === device.id);
-  const next = idx >= 0
-    ? list.map((s) => (s.id === device.id ? device : s))
-    : [...list, device];
-  await AsyncStorage.setItem(KEY_WHEEL_SENSORS, JSON.stringify(next));
-}
-
-// Rimuove un sensore dalla lista (e resetta active se era quello attivo)
-export async function removeWheelSensor(id: string): Promise<void> {
-  const list = await loadWheelSensorList();
-  const next = list.filter((s) => s.id !== id);
-  await AsyncStorage.setItem(KEY_WHEEL_SENSORS, JSON.stringify(next));
-  const activeId = await loadActiveWheelSensorId();
-  if (activeId === id) await AsyncStorage.removeItem(KEY_WHEEL_ACTIVE_ID);
-}
-
-// ID del sensore attivo (preferito durante la scan)
-export async function loadActiveWheelSensorId(): Promise<string | null> {
-  try {
-    return await AsyncStorage.getItem(KEY_WHEEL_ACTIVE_ID);
-  } catch {
-    return null;
-  }
-}
-
-export async function setActiveWheelSensorId(id: string | null): Promise<void> {
-  if (id) await AsyncStorage.setItem(KEY_WHEEL_ACTIVE_ID, id);
-  else    await AsyncStorage.removeItem(KEY_WHEEL_ACTIVE_ID);
-}
-
-// Shortcut: carica il sensore attivo (o il primo della lista se nessuno attivo)
-export async function loadPreferredWheelSensor(): Promise<WheelSensorDevice | null> {
-  const list     = await loadWheelSensorList();
-  if (list.length === 0) return null;
-  const activeId = await loadActiveWheelSensorId();
-  return list.find((s) => s.id === activeId) ?? list[0];
-}
-
-// Compat legacy: alias per saveWheelSensor
-export async function savePreferredWheelSensor(device: WheelSensorDevice): Promise<void> {
-  await saveWheelSensor(device);
-  await setActiveWheelSensorId(device.id);
-}
-
-// Compat legacy: rimuove solo il sensore attivo
-export async function removePreferredWheelSensor(): Promise<void> {
-  const active = await loadPreferredWheelSensor();
-  if (active) await removeWheelSensor(active.id);
-}
+// ── Sensore ruota Crr — gestito via whitelist firmware ────────────────────────
+// Il sensore ruota è un `SensorEntry` di type 'wheel' nella whitelist (0xaa0b),
+// scoperto via SENSOR_SCAN 0xaa0e e brokerato dal firmware (servizio custom
+// 0xBB00 lato sensore, NON CSC standard). Il vecchio store locale dedicato
+// (`WheelSensorDevice` + chiavi `wheel_sensors`/`wheel_active_id`) è stato rimosso
+// in quanto codice morto dopo il modello broker v0.2.0/v0.2.2 (#35).
 
 // ── Cadence sensor — pairing non esclusivo ────────────────────────────────────
 //
