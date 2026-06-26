@@ -8,9 +8,11 @@
  * Indoor: θ≈0, vento≈0  → Crr = -(a + k_aero·v²) / g
  * Outdoor: protocollo bidirezionale A/B → componente vento si cancella dalla media
  *
- * Il firmware del sensore ruota (nRF52840 + ICM-42688) invia:
+ * Il firmware del sensore ruota (nRF52840 + LSM6DS3TR-C) invia:
  *   - speedMs  : velocità lineare ricavata da ω_gyro × r_tire (m/s)
- *   - accelMs2 : decelerazione lineare gravity-compensated e low-pass 2Hz (m/s²)
+ *   - accelMs2 : decelerazione = derivata della velocità gyro-derivata
+ *                (gravity-free per costruzione, NON da accelerometro compensato),
+ *                low-pass 2 Hz (m/s²)
  *   - tempC    : temperatura (°C)
  *   - vibRMS   : energia vibrazioni 2-20 Hz (m/s²) — indicatore qualità superficie
  */
@@ -104,9 +106,14 @@ export function fitCrrFromRun(
   if (Math.abs(denom) > 1e-9) {
     c2 = (n * Sxy - Sx * Sy) / denom;
     // L'aero non può essere negativa: se la regressione la spinge < 0 (rumore /
-    // poco spread in v²), la fissiamo a 0 e ri-stimiamo il solo termine costante.
-    if (c2 < 0) { c2 = 0; c1 = Sy / n; }
-    else        { c1 = (Sy - c2 * Sx) / n; }
+    // poco spread in v²) NON la azzeriamo — `c1 = mean(-a)` includerebbe il drag
+    // aero medio mis-attribuendolo al rolling → Crr gonfiato. Usiamo il termine
+    // aero dal CdA noto e ri-stimiamo il costante sottraendolo, coerente col ramo
+    // denom~0 sotto (#34).
+    if (c2 < 0) {
+      c2 = params.cdaM2 > 0 ? (params.rhoKgM3 * params.cdaM2) / (2 * params.massKg) : 0;
+    }
+    c1 = (Sy - c2 * Sx) / n;
   } else {
     // Spread in v² insufficiente: usa il CdA noto per l'aero, media per il resto
     c2 = params.cdaM2 > 0 ? (params.rhoKgM3 * params.cdaM2) / (2 * params.massKg) : 0;
