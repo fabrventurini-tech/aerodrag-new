@@ -37,7 +37,15 @@ interface Props {
 
 // ── Costanti UI ───────────────────────────────────────────────────────────────
 
+// Denominatore della progress bar coast-down (puramente cosmetico).
 const COAST_DOWN_S_MAX = 90;
+// #39 (MOTHER review): timeout DURO del coast, distinto dal massimo cosmetico.
+// È solo un fail-safe per il caso patologico "frame freschi ma speedMs mai < 2"
+// (rullo a regime / keep-alive del relay): NON deve mai mordere un coast valido.
+// Verifica caso peggiore: coast 30 km/h → 2 m/s con setup estremo aero/basso-Crr
+// (Crr≈0.001, CdA≈0.15, 90 kg) ≈ 205 s → 240 s dà ~17% di margine. Il completamento
+// normale chiude molto prima via low-speed; qui si attende solo nel caso anomalo.
+const COAST_HARD_TIMEOUT_S = 240;
 // #35: durante il coast lo stream wheel arriva a ~10 Hz; se non arriva un frame
 // per oltre questa soglia, lo stream è considerato interrotto (la freschezza lato
 // useBLE scade a 2 s) → si aborta il run.
@@ -145,10 +153,12 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
       return;
     }
 
-    // #39 cap temporale: con frame freschi ma `speedMs` mai sotto soglia (rullo a
-    // regime / keep-alive del relay >2 m/s) né lo stale né il low-speed scattano →
-    // senza questo ramo la UI resterebbe in CoastPhase oltre COAST_DOWN_S_MAX.
-    if (!finalizingRef.current && coastTimer >= COAST_DOWN_S_MAX) {
+    // #39 cap temporale (fail-safe): con frame freschi ma `speedMs` mai sotto
+    // soglia (rullo a regime / keep-alive del relay >2 m/s) né lo stale né il
+    // low-speed scattano → senza questo ramo la UI resterebbe in CoastPhase senza
+    // uscita. Soglia DURA e generosa (COAST_HARD_TIMEOUT_S), distinta dal massimo
+    // cosmetico, per non abortire mai un coast lungo ma valido (setup molto aero).
+    if (!finalizingRef.current && coastTimer >= COAST_HARD_TIMEOUT_S) {
       finalizingRef.current = true;
       handleCoastTimeout();
     }
@@ -217,16 +227,16 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
     );
   }
 
-  // #39: il coast-down ha superato il massimo dichiarato (COAST_DOWN_S_MAX) senza
+  // #39: il coast-down ha superato il timeout duro (COAST_HARD_TIMEOUT_S) senza
   // completarsi — frame freschi ma velocità mai sotto la soglia di stop (rullo a
   // regime / keep-alive del relay). Annulla e scarta il run, niente hang in
-  // CoastPhase oltre il massimo.
+  // CoastPhase.
   function handleCoastTimeout() {
     sendCommand(WHEEL_CMD.CANCEL);
     abortCrrRun();
     Alert.alert(
       'Coast-down scaduto',
-      `Il coast-down ha superato il massimo (${COAST_DOWN_S_MAX} s) senza completarsi: il sensore non è sceso sotto la soglia di stop. Run annullato, ripeti.`
+      `Il coast-down ha superato il timeout massimo (${COAST_HARD_TIMEOUT_S} s) senza completarsi: il sensore non è sceso sotto la soglia di stop. Run annullato, ripeti.`
     );
   }
 
