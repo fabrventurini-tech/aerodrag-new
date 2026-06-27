@@ -142,6 +142,15 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
     if (!finalizingRef.current && coastTimer >= 5 && lowSpeedCountRef.current >= 5) {
       finalizingRef.current = true;
       handleStopRun();
+      return;
+    }
+
+    // #39 cap temporale: con frame freschi ma `speedMs` mai sotto soglia (rullo a
+    // regime / keep-alive del relay >2 m/s) né lo stale né il low-speed scattano →
+    // senza questo ramo la UI resterebbe in CoastPhase oltre COAST_DOWN_S_MAX.
+    if (!finalizingRef.current && coastTimer >= COAST_DOWN_S_MAX) {
+      finalizingRef.current = true;
+      handleCoastTimeout();
     }
   }, [wheelStream.speedMs, crrCalib.mode, coastTimer]);
 
@@ -208,6 +217,19 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
     );
   }
 
+  // #39: il coast-down ha superato il massimo dichiarato (COAST_DOWN_S_MAX) senza
+  // completarsi — frame freschi ma velocità mai sotto la soglia di stop (rullo a
+  // regime / keep-alive del relay). Annulla e scarta il run, niente hang in
+  // CoastPhase oltre il massimo.
+  function handleCoastTimeout() {
+    sendCommand(WHEEL_CMD.CANCEL);
+    abortCrrRun();
+    Alert.alert(
+      'Coast-down scaduto',
+      `Il coast-down ha superato il massimo (${COAST_DOWN_S_MAX} s) senza completarsi: il sensore non è sceso sotto la soglia di stop. Run annullato, ripeti.`
+    );
+  }
+
   function handleApply() {
     applyCrrResult();
     Alert.alert(
@@ -271,6 +293,7 @@ export function CrrCalibrationScreen({ visible, onClose, sendCommand }: Props) {
               totalRuns={crrCalib.totalRuns}
               protocol={crrCalib.protocol}
               isOutdoorB={crrCalib.currentRun > 3}
+              streamLive={wheelConnected}
               onStartCoast={handleStartRun}
             />
           )}
@@ -423,17 +446,21 @@ function SetupPhase({ protocol, targetKmh, onSelectQuality, onReady }: {
   );
 }
 
-function SpinupPhase({ speedKmh, targetKmh, runIndex, totalRuns, protocol, isOutdoorB, onStartCoast }: {
+function SpinupPhase({ speedKmh, targetKmh, runIndex, totalRuns, protocol, isOutdoorB, streamLive, onStartCoast }: {
   speedKmh:     number;
   targetKmh:    number;
   runIndex:     number;
   totalRuns:    number;
   protocol:     'indoor' | 'outdoor';
   isOutdoorB:   boolean;
+  streamLive:   boolean;
   onStartCoast: () => void;
 }) {
   const pct     = Math.min(1, speedKmh / targetKmh);
-  const ready   = speedKmh >= targetKmh - 1;
+  // #39: avvio coast bloccato se lo stream del sensore è stantio (freshness 2 s
+  // lato useBLE → wheelSensorStatus != 'connected'): altrimenti speedKmh resta
+  // congelato all'ultimo valore e si potrebbe avviare un run su stream morto.
+  const ready   = streamLive && speedKmh >= targetKmh - 1;
   const dirLabel = protocol === 'outdoor'
     ? isOutdoorB ? '  Direzione B (inversa)' : '  Direzione A'
     : '';
@@ -460,7 +487,9 @@ function SpinupPhase({ speedKmh, targetKmh, runIndex, totalRuns, protocol, isOut
           disabled={!ready}
         >
           <Text style={styles.primaryBtnText}>
-            {ready ? 'Smetti di pedalare — Coast-down!' : `Pedala fino a ${targetKmh} km/h…`}
+            {!streamLive
+              ? 'Segnale sensore perso…'
+              : ready ? 'Smetti di pedalare — Coast-down!' : `Pedala fino a ${targetKmh} km/h…`}
           </Text>
         </TouchableOpacity>
       </View>
